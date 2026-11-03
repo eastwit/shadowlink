@@ -1,0 +1,70 @@
+# ShadowLink default configuration.
+# Every key here mirrors a dataclass field in src/shadowlink/config.py.
+# Override from the command line with e.g. --set retarget.flex_gain=1.2
+
+capture:
+  source: camera          # camera | video
+  camera: "0"             # camera index, file path, or stream URL
+  video: null             # used when source: video
+  width: 0                # 0 = native
+  height: 0
+  mirror: true            # mirror once before perception and display
+  api: any                # any | dshow | msmf
+  buffer_size: 1
+  fps: 0.0                # 0 = source frame rate
+
+perception:
+  backend: hamer          # hamer | mediapipe
+  side: any               # any | left | right (anatomical)
+  pick: track             # largest | center | track
+  skip: 1                 # run perception every Nth frame
+  max_age_s: 0.5
+  min_detection_confidence: 0.3
+  rescale_factor: 2.0
+  fp16: true
+  pipeline: two_stage     # single | two_stage
+
+retarget:
+  flex_gain: 1.0
+  distal_gain: 1.0
+  thumb_base_gain: 1.7
+  thumb_flex_gain: 1.1
+  thumb_distal_gain: 1.15
+  spread_gain: 0.7
+  spread_deadzone: 0.03
+  spread_clip: 0.45
+  thumb_opp_gain: 0.0
+
+smoothing:
+  kind: one_euro          # none | exponential | one_euro
+  tau: 0.055
+  min_cutoff: 1.0
+  beta: 0.05
+  d_cutoff: 1.0
+  max_rate_rad_s: 15.0
+  return_rate_rad_s: 6.0
+  lost_timeout_s: 0.5
+  hold_s: 0.15
+
+sim:
+  max_catchup_s: 0.05
+  reset_stall_s: 0.5
+  viewer: true
+  touch_force_scale: 1.0
+  start_pose: open hand
+
+ui:
+  show: true
+  draw: skeleton          # skeleton | mesh | none
+  record: null
+  window_name: ShadowLink
+
+data:
+  data_dir: null          # defaults to SHADOWLINK_DATA or ~/.cache/shadowlink
+  checkpoint: null        # defaults to <data_dir>/hamer_ckpts/checkpoints/hamer.ckpt
+  hand_model: null        # defaults to <data_dir>/mediapipe/hand_landmarker.task
+  calibration: null       # defaults to the per-user config directory
+
+runtime:
+  max_frames: 0
+  debug: false

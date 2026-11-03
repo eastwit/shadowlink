@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shadowlink"
+version = "0.1.0"
+description = "Monocular hand teleoperation of a Shadow Hand in MuJoCo"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+license = { text = "MIT" }
+authors = [{ name = "ShadowLink contributors" }]
+keywords = ["mujoco", "shadow-hand", "teleoperation", "hand-pose", "hamer", "mediapipe"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "numpy>=1.24,<2",
+  "opencv-python>=4.8",
+  "mujoco>=3.16",
+  "mediapipe>=0.10.14",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+hamer = [
+  "torch>=2.0,<2.6",
+  "torchvision>=0.15,<0.21",
+  "pytorch-lightning>=1.9,<2.1",
+  "yacs",
+  "timm",
+  "einops",
+  "scikit-image",
+  "xtcocotools",
+  "pandas",
+  "smplx>=0.1.28,<0.2",
+  "pyrender>=0.1.45",
+  "chumpy>=0.70",
+]
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=5",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+shadowlink = "shadowlink.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+shadowlink = [
+  "assets/shadow_hand/*.xml",
+  "assets/shadow_hand/*.md",
+  "assets/shadow_hand/*.png",
+  "assets/shadow_hand/LICENSE",
+  "assets/shadow_hand/assets/*.obj",
+  "assets/shadow_hand/tactile/*.xml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+  "hamer: requires the HaMeR checkpoint and torch",
+  "mediapipe: requires the MediaPipe hand_landmarker.task model",
+  "gpu: requires a CUDA device",
+  "slow: slow integration test",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["shadowlink"]

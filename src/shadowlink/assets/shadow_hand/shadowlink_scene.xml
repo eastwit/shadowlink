@@ -1,0 +1,15 @@
+<mujoco model="shadowlink_scene">
+  <include file="right_hand.xml"/>
+  <compiler meshdir="assets"/>
+
+  <statistic extent="0.3"/>
+
+  <visual>
+    <global azimuth="220" elevation="-30"/>
+  </visual>
+
+  <worldbody>
+    <light pos="0 0 1"/>
+    <light pos="0.3 0 1.5" dir="0 0 -1" directional="true"/>
+  </worldbody>
+</mujoco>

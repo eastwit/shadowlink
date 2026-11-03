@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.pytest_tmp/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Models and data (never commit)
+_DATA/
+data/
+models/
+*.ckpt
+*.pth
+*.pt
+*.pkl
+*.task
+*.tar
+*.tar.gz
+*.npz
+
+# Runtime output
+outputs/
+out_*/
+out_*.mp4
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
