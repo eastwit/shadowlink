@@ -26,6 +26,9 @@ ShadowLink 从单张图像重建人手姿态，并把连续的关节运动映射
 - **从模型读取执行器布局**：关节名称、顺序、类型和限位全部来自 MJCF，
   启动时校验，不再维护重复常量。
 - **触觉仿真**：120 个触觉点（5 指 × 6 × 4），按力大小从蓝色渐变到红色。
+- **可选手机宏观姿态**：运行第三方 [phyphox](https://phyphox.org) App 的手机
+  为整只手增加 yaw/pitch/roll 三个自由度，摄像头继续控制手指。按 `g` 切换
+  跟随，关闭时冻结当前朝向。通过局域网工作，不需要额外 Python 依赖。
 - **适合无头环境**：`--no-show --no-viewer`、合成帧源，以及不需要 GPU、
   摄像头或权重的单元测试。
 - **无路径 hack**：不使用 `os.chdir`、`sys.path.insert`，不写死用户目录，
@@ -41,6 +44,7 @@ ShadowLink 从单张图像重建人手姿态，并把连续的关节运动映射
 | OpenCV | 4.8+ |
 | HaMeR 后端 | PyTorch 2.0–2.5，建议使用 CUDA |
 | GPU | 任意 CUDA GPU；下文数据来自 RTX 4060 Laptop |
+| 手机（可选） | 安装 [phyphox](https://phyphox.org) 并开启 Remote Access，与电脑同一局域网 |
 
 支持 Windows 11 和 Linux。MuJoCo viewer 与 OpenCV 预览均可关闭。
 
@@ -85,6 +89,9 @@ mmcv 等包，并可能覆盖刚安装的 PyTorch 版本。
 ```bash
 pip install -e ".[dev]"
 ```
+
+手机宏观姿态不需要额外 Python 包：在手机上安装 phyphox 并开启 Remote Access
+（局域网明文 HTTP）即可。详见 [docs/PHONE.md](docs/PHONE.md)。
 
 ### 3. 获取模型
 
@@ -134,6 +141,10 @@ shadowlink run --source video --camera demo.mp4 --backend hamer \
 
 # 无摄像头：循环展示 13 个关键帧姿态
 shadowlink demo
+
+# 用手机姿态控制整手朝向
+shadowlink run --backend hamer --phone phyphox --phone-host 192.0.2.10 \
+  --phone-follow --data-dir D:/models/hamer/_DATA
 ```
 
 ### 按键
@@ -142,7 +153,9 @@ shadowlink demo
 | --- | --- |
 | `q` / `Esc` | 退出 |
 | `c` | 采集零点姿态（保持张开手不动） |
-| `r` | 重置物理状态和目标到起始姿态 |
+| `g` | 切换手机宏观跟随（仅在启用手机姿态源时显示） |
+| `0` | 以当前手机姿态重新归零（冻结时同时开始跟随） |
+| `r` | 重置物理状态、目标以及宏观朝向到起始姿态 |
 
 ### 常用参数
 
@@ -154,7 +167,11 @@ shadowlink demo
 --smooth 秒                  --output 录像.mp4
 --no-show --no-viewer        --max-frames N
 --fp16 / --no-fp16           --calibration 路径
---config 文件                --set section.field=value
+--phone none|phyphox         --phone-host HOST[:PORT]
+--phone-port PORT            --phone-scan
+--phone-follow               --phone-mount back|in_hand|custom
+--config 文件
+--set section.field=value
 ```
 
 优先级：**CLI 参数 / `--set` > `--config` YAML > dataclass 默认值**。
@@ -179,6 +196,13 @@ shadowlink demo
    重定向（掌面坐标系 → 弯曲/张开/对掌）
                      ▼
    One-Euro 滤波 → 速度限幅 → 状态机 → 20 维执行器目标
+                     │
+手机姿态 ─► phyphox HTTP 轮询 ─► 最新样本
+                     │                （可选，独立线程）
+                     ▼
+   `g` 开关 → 相对旋转 → 死区/增益/限幅 → 平滑
+                     ▼
+   MuJoCo mocap 基座朝向（整手 yaw/pitch/roll）
                      ▼
    MuJoCo 固定步长物理 + 120 触觉 + viewer/预览
 ```
@@ -208,6 +232,45 @@ shadowlink calibrate --backend hamer --data-dir D:/models/hamer/_DATA
 提示重新校准，而不是悄悄使用错误的零点。
 
 详见 [docs/CALIBRATION.md](docs/CALIBRATION.md)。
+
+## 手机宏观姿态
+
+摄像头层保持原样，继续做连续手指重定向。运行 [phyphox](https://phyphox.org)
+的手机可以额外旋转整只 Shadow Hand（yaw、pitch、roll）。两路输入相互独立；
+手部基座通过 MuJoCo mocap body 驱动，因此手指动力学和触觉传感器都不受影响。
+
+1. 在手机上安装 phyphox，打开包含 **Attitude** 输出的实验（只提供陀螺仪和
+   加速度计的实验会走原始 IMU 回退路径）。
+2. 开启 **Remote Access**，让手机与电脑处于同一网络，记下手机 IP。
+3. 启动 ShadowLink：
+
+```bash
+shadowlink run --backend hamer --phone phyphox \
+  --phone-host 192.0.2.10 --phone-follow \
+  --data-dir D:/models/hamer/_DATA
+```
+
+按 `g` 开始或停止跟随；重新开启时会在当前姿态重新对零，手不会突然转回旧朝向。
+跟随过程中可随时按 `0` 把当前手机姿态设为新的 0 位：手保持当前朝向不跳变，
+并从该位置继续（或开始）跟随。无窗口模式用 `--phone-follow` 在首个可用样本
+到达时自动开始跟随。样本过期（默认 0.35 秒）时手部冻结并退出跟随，摄像头
+链路仍继续工作；恢复后按 `0` 重新对零即可继续。
+
+`shadowlink phone-test --host 192.0.2.10 --seconds 10` 会实时打印连接状态、
+采样率、四元数、欧拉角和相对轴角；`--list` 会打印实验的缓冲区名称和选中的
+`phone.mount_preset` 选择手机与手的固定安装关系。默认 `back` 对应计划中的
+手背绑法：手机顶部指向手指、充电口指向肘部、手机背面贴着手背。把手机平放在
+掌心、屏幕朝外测试时用 `--phone-mount in_hand`；两者相差绕手机长轴的 180°
+旋转。`phone.gain` 调整增益，
+`phone.max_angle_deg` 是可选限幅（默认 `180`，即不限幅）。`phone.pivot` 选择
+旋转中心：`wrist`（默认）、`forearm` 或 `palm`。被动查看器会在 0 位手部朝向
+处画出 RGB 三轴，HUD 同时显示该 0 位的 `p/r/y` 欧拉角。
+
+> **安全提醒：** phyphox Remote Access 是无认证的明文 HTTP。只应在可信局域网
+> 使用，不要把端口转发到公网，用完后关闭 Remote Access。ShadowLink 只发起
+> 出站请求，不监听手机连接，也不会保存手机地址。
+
+设置、轴映射和限制详见 [docs/PHONE.md](docs/PHONE.md)。
 
 ## 性能
 
@@ -259,6 +322,9 @@ pytest -m hamer -q
 SHADOWLINK_TEST_HAND_MODEL=D:/models/hamer/_DATA/mediapipe/hand_landmarker.task \
 SHADOWLINK_TEST_IMAGE=example_data/test5.jpg \
 pytest -m mediapipe -q
+
+# 真实手机 + phyphox
+SHADOWLINK_TEST_PHONE=1 SHADOWLINK_TEST_PHONE_HOST=192.0.2.10 pytest -m phone -q
 ```
 
 `tests/test_no_path_hacks.py` 会强制检查安装包中不存在 `os.chdir`、
@@ -274,11 +340,14 @@ src/shadowlink/
 ├── types.py              不可变帧/检测/观测
 ├── app.py                唯一的编排者
 ├── cli.py                argparse 入口
+├── math3d.py             纯 NumPy 四元数工具
+├── phone/                phyphox HTTP 客户端、姿态回退、服务
 ├── perception/           MediaPipe 检测器、HaMeR 后端、worker、选择器
-├── retarget/             几何、映射、平滑、校准
+├── retarget/             几何、映射、平滑、宏观姿态、校准
 ├── sim/                  MJCF 加载、Shadow Hand、固定步长、viewer
 ├── ui/                   叠加层、遥测、OpenCV 窗口/录像
-├── tools/                setup-models、doctor、触觉生成、render-pose
+├── tools/                setup-models、doctor、触觉生成、
+│                         phone-test、render-pose
 └── assets/shadow_hand/   MJCF、OBJ 网格、触觉 XML、原始许可证
 ```
 
@@ -289,7 +358,8 @@ src/shadowlink/
 ShadowLink 自身代码采用 MIT 许可。HaMeR 是以 MIT 许可引入的子模块；Shadow Hand
 资产来自 MuJoCo Menagerie / Shadow Robot，采用 Apache-2.0；MediaPipe 采用
 Apache-2.0。MANO 与 HaMeR checkpoint **不随仓库分发**，仍受各自原始许可约束。
-详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+phyphox 是第三方 App，不随本项目分发；ShadowLink 只读取其公开 HTTP 接口。详见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 引用
 

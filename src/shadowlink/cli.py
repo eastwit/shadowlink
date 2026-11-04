@@ -110,6 +110,38 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     return calibrate_from_args(args, _load_config(args))
 
 
+def cmd_phone_test(args: argparse.Namespace) -> int:
+    from dataclasses import replace
+
+    from shadowlink.phone.client import parse_host_port
+    from shadowlink.tools.phone_test import run_phone_test
+
+    cfg = _load_config(args)
+    host = args.host
+    port = args.port
+    if host is not None:
+        try:
+            parsed_host, parsed_port = parse_host_port(host, default_port=port or cfg.phone.port)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        host = parsed_host
+        if port is None:
+            port = parsed_port
+    phone = replace(
+        cfg.phone,
+        source="phyphox",
+        host=host if host is not None else cfg.phone.host,
+        port=port if port is not None else cfg.phone.port,
+        auto_discover=bool(args.scan) or cfg.phone.auto_discover,
+    )
+    return run_phone_test(
+        phone,
+        seconds=args.seconds,
+        list_buffers=args.list,
+        as_json=args.json,
+    )
+
+
 def cmd_setup_models(args: argparse.Namespace) -> int:
     from shadowlink.tools.setup_models import setup_models
 
@@ -178,6 +210,28 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--checkpoint", default=None)
     run.add_argument("--hand-model", default=None)
     run.add_argument("--calibration", default=None)
+    run.add_argument("--phone", choices=["none", "phyphox"], default=None)
+    run.add_argument("--phone-host", default=None, help="phone IP or host[:port]")
+    run.add_argument("--phone-port", type=int, default=None)
+    run.add_argument(
+        "--phone-mount",
+        choices=["back", "in_hand", "custom"],
+        default=None,
+        help="phone-to-hand mount: back (strapped to the back of the hand), "
+        "in_hand (held screen-up in the palm), or custom (phone.mount_* values)",
+    )
+    run.add_argument(
+        "--phone-scan",
+        action="store_true",
+        default=None,
+        help="scan the local /24 for phyphox when the phone is unreachable",
+    )
+    run.add_argument(
+        "--phone-follow",
+        action="store_true",
+        default=None,
+        help="start following as soon as a ready phone sample arrives",
+    )
     run.add_argument("--debug", action="store_true", default=None)
     run.set_defaults(func=cmd_run)
 
@@ -197,6 +251,23 @@ def build_parser() -> argparse.ArgumentParser:
     cal.add_argument("--calibration", default=None)
     cal.add_argument("--debug", action="store_true", default=None)
     cal.set_defaults(func=cmd_calibrate)
+
+    phone_test = sub.add_parser(
+        "phone-test",
+        help="print live phyphox attitude state and buffers",
+    )
+    _common(phone_test)
+    phone_test.add_argument("--seconds", type=float, default=10.0)
+    phone_test.add_argument("--host", default=None, help="phone IP or host[:port]")
+    phone_test.add_argument("--port", type=int, default=None)
+    phone_test.add_argument("--scan", action="store_true")
+    phone_test.add_argument(
+        "--list",
+        action="store_true",
+        help="print the experiment buffers and the selected source, then exit",
+    )
+    phone_test.add_argument("--json", action="store_true")
+    phone_test.set_defaults(func=cmd_phone_test)
 
     setup = sub.add_parser("setup-models", help="download/check models")
     setup.add_argument("--data-dir", default=None)

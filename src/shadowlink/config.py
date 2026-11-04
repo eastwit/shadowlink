@@ -17,6 +17,9 @@ import yaml
 
 DrawMode = Literal["skeleton", "mesh", "none"]
 BackendName = Literal["hamer", "mediapipe"]
+PhoneName = Literal["none", "phyphox"]
+MacroPivot = Literal["palm", "wrist", "forearm"]
+MountPreset = Literal["back", "in_hand", "custom"]
 
 
 class ConfigError(ValueError):
@@ -101,6 +104,31 @@ class DataConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PhoneConfig:
+    source: PhoneName = "none"
+    host: str | None = None
+    port: int = 8080
+    poll_hz: float = 30.0
+    timeout_s: float = 1.0
+    retry_s: float = 1.5
+    auto_start: bool = True
+    auto_discover: bool = False
+    auto_follow: bool = False
+    pivot: MacroPivot = "wrist"
+    stale_timeout_s: float = 0.35
+    mount_preset: MountPreset = "back"
+    mount_w: float = 0.0
+    mount_x: float = 0.7071068
+    mount_y: float = 0.0
+    mount_z: float = -0.7071068
+    gain: float = 1.0
+    deadzone_deg: float = 1.5
+    max_angle_deg: float = 180.0
+    smoothing_tau_s: float = 0.06
+    max_rate_rad_s: float = 6.0
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeConfig:
     max_frames: int = 0
     debug: bool = False
@@ -115,6 +143,7 @@ class AppConfig:
     sim: SimConfig = SimConfig()
     ui: UIConfig = UIConfig()
     data: DataConfig = DataConfig()
+    phone: PhoneConfig = PhoneConfig()
     runtime: RuntimeConfig = RuntimeConfig()
 
     # ------------------------------------------------------------------ load
@@ -221,6 +250,38 @@ class AppConfig:
             raise ConfigError("sim.reset_stall_s must be >= 0")
         if sim.touch_force_scale <= 0:
             raise ConfigError("sim.touch_force_scale must be > 0")
+        phone = self.phone
+        if not 1 <= phone.port <= 65535:
+            raise ConfigError("phone.port must be between 1 and 65535")
+        if not math.isfinite(phone.poll_hz) or phone.poll_hz <= 0:
+            raise ConfigError("phone.poll_hz must be finite and > 0")
+        if not math.isfinite(phone.timeout_s) or phone.timeout_s <= 0:
+            raise ConfigError("phone.timeout_s must be finite and > 0")
+        if not math.isfinite(phone.retry_s) or phone.retry_s <= 0:
+            raise ConfigError("phone.retry_s must be finite and > 0")
+        if phone.source == "phyphox" and not phone.host and not phone.auto_discover:
+            raise ConfigError(
+                "phone.host is required when phone.source=phyphox unless auto_discover is enabled"
+            )
+        if phone.pivot not in ("palm", "wrist", "forearm"):
+            raise ConfigError("phone.pivot must be one of palm, wrist, forearm")
+        if phone.mount_preset not in ("back", "in_hand", "custom"):
+            raise ConfigError("phone.mount_preset must be one of back, in_hand, custom")
+        if phone.stale_timeout_s <= 0:
+            raise ConfigError("phone.stale_timeout_s must be > 0")
+        if not math.isfinite(phone.gain) or phone.gain < 0:
+            raise ConfigError("phone.gain must be finite and >= 0")
+        if not 0 <= phone.deadzone_deg < phone.max_angle_deg <= 180:
+            raise ConfigError("phone angles must satisfy 0 <= deadzone_deg < max_angle_deg <= 180")
+        if phone.smoothing_tau_s < 0:
+            raise ConfigError("phone.smoothing_tau_s must be >= 0")
+        if phone.max_rate_rad_s <= 0:
+            raise ConfigError("phone.max_rate_rad_s must be > 0")
+        mount = (phone.mount_w, phone.mount_x, phone.mount_y, phone.mount_z)
+        if not all(math.isfinite(value) for value in mount):
+            raise ConfigError("phone.mount_* must be finite")
+        if math.sqrt(sum(value * value for value in mount)) < 1e-9:
+            raise ConfigError("phone mount quaternion must be non-zero")
         if self.runtime.max_frames < 0:
             raise ConfigError("runtime.max_frames must be >= 0")
 

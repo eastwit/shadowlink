@@ -65,6 +65,29 @@ data:
   hand_model: null        # defaults to <data_dir>/mediapipe/hand_landmarker.task
   calibration: null       # defaults to the per-user config directory
 
+phone:
+  source: none            # none | phyphox
+  host: null              # phone IP or hostname; required for phyphox unless auto_discover
+  port: 8080              # phyphox Remote Access port
+  poll_hz: 30.0
+  timeout_s: 1.0          # one HTTP request
+  retry_s: 1.5            # delay after a connection failure
+  auto_start: true        # start a paused experiment on the phone
+  auto_discover: false    # opt-in /24 scan on the local network
+  auto_follow: false      # follow as soon as a ready sample arrives
+  pivot: wrist            # palm | wrist | forearm
+  stale_timeout_s: 0.35
+  mount_preset: back      # back (strap) | in_hand (held screen-up) | custom
+  mount_w: 0.0            # custom phone body -> hand base rotation
+  mount_x: 0.7071068      # default: charging port -> elbow, top -> fingers,
+  mount_y: 0.0            # screen away from the back of the hand
+  mount_z: -0.7071068
+  gain: 1.0
+  deadzone_deg: 1.5
+  max_angle_deg: 180.0    # 180 = no clamp on the relative rotation
+  smoothing_tau_s: 0.06
+  max_rate_rad_s: 6.0
+
 runtime:
   max_frames: 0
   debug: false

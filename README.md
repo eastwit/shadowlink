@@ -31,6 +31,10 @@ mapped frame by frame, so the robot follows the operator's motion continuously.
   read from the MJCF at startup, then checked. No duplicated constants.
 - **Tactile simulation**: 120 taxels (5 fingers × 6 × 4) with force-dependent
   blue→red colouring.
+- **Optional phone macro orientation**: a phone running the third-party
+  [phyphox](https://phyphox.org) app adds 3-DOF yaw/pitch/roll to the whole hand
+  while the camera keeps controlling the fingers. Toggle with `g`; the hand
+  freezes when follow is off. Works over the LAN with no extra Python packages.
 - **Headless-friendly**: `--no-show --no-viewer`, synthetic frame sources, and a
   unit suite that needs no GPU, camera, or weights.
 - **No path hacks**: no `os.chdir`, no `sys.path.insert`, no hard-coded user
@@ -46,6 +50,7 @@ mapped frame by frame, so the robot follows the operator's motion continuously.
 | OpenCV | 4.8+ |
 | HaMeR backend | PyTorch 2.0–2.5, CUDA optional but strongly recommended |
 | GPU | Any CUDA GPU; measurements below use an RTX 4060 Laptop |
+| Phone (optional) | Android/iOS phone with [phyphox](https://phyphox.org) and Remote Access on the same LAN |
 
 Windows 11 and Linux are supported. The MuJoCo viewer and OpenCV preview are
 optional.
@@ -92,6 +97,10 @@ For CPU/MediaPipe-only use:
 ```bash
 pip install -e ".[dev]"
 ```
+
+Phone macro orientation needs no Python extra: install phyphox on the phone and
+enable its Remote Access server (plain HTTP on the local network). See
+[docs/PHONE.md](docs/PHONE.md).
 
 ### 3. Fetch the models
 
@@ -142,6 +151,10 @@ shadowlink run --source video --camera demo.mp4 --backend hamer \
 
 # No camera: cycle through the 13 keyframe poses
 shadowlink demo
+
+# Add phone attitude control for whole-hand orientation
+shadowlink run --backend hamer --phone phyphox --phone-host 192.0.2.10 \
+  --phone-follow --data-dir D:/models/hamer/_DATA
 ```
 
 ### Controls
@@ -150,7 +163,9 @@ shadowlink demo
 | --- | --- |
 | `q` / `Esc` | quit |
 | `c` | capture a neutral pose (hold an open hand still) |
-| `r` | reset physics and targets to the start pose |
+| `g` | toggle phone macro follow (only shown when a phone source is enabled) |
+| `0` | re-zero the phone mapping at the current attitude (starts following if frozen) |
+| `r` | reset physics, targets, and macro orientation to the start pose |
 
 ### Common options
 
@@ -162,7 +177,11 @@ shadowlink demo
 --smooth SECONDS             --output RECORDING.mp4
 --no-show --no-viewer        --max-frames N
 --fp16 / --no-fp16           --calibration PATH
---config FILE                --set section.field=value
+--phone none|phyphox         --phone-host HOST[:PORT]
+--phone-port PORT            --phone-scan
+--phone-follow               --phone-mount back|in_hand|custom
+--config FILE
+--set section.field=value
 ```
 
 Configuration precedence is **CLI flags / `--set` > `--config` YAML > dataclass
@@ -188,6 +207,13 @@ camera/video ──► FramePacket (immutable, mirrored once)
    retarget (palm frame → flexion/spread/opposition)
                      ▼
    One-Euro filter → slew limit → state machine → 20 actuator targets
+                     │
+phone attitude ─► phyphox HTTP polling ─► latest sample
+                     │                   (optional, separate thread)
+                     ▼
+   `g` toggle → relative rotation → deadzone/gain/clamp → smoothing
+                     ▼
+   MuJoCo mocap base orientation (whole-hand yaw/pitch/roll)
                      ▼
    MuJoCo fixed-step physics + 120 touch sensors + viewer/preview
 ```
@@ -218,6 +244,56 @@ backend and side that produced it; switching backends asks you to calibrate
 again instead of silently using the wrong zero.
 
 See [docs/CALIBRATION.md](docs/CALIBRATION.md).
+
+## Phone macro orientation
+
+The camera layer keeps doing what it always did: continuous finger retargeting.
+A phone running [phyphox](https://phyphox.org) can additionally rotate the whole
+Shadow Hand in yaw, pitch, and roll. The two inputs are independent, and the
+hand base is driven through a MuJoCo mocap body, so the finger dynamics and
+tactile sensors are unchanged.
+
+1. Install phyphox on the phone and open an experiment that records **Attitude**
+   (the raw-gyroscope fallback also works when the experiment exposes gyroscope
+   and accelerometer buffers).
+2. Enable **Remote Access** and connect the phone and computer to the same
+   network. Note the phone's LAN IP.
+3. Start ShadowLink:
+
+```bash
+shadowlink run --backend hamer --phone phyphox \
+  --phone-host 192.0.2.10 --phone-follow \
+  --data-dir D:/models/hamer/_DATA
+```
+
+Press `g` to start or stop following. Turning it on re-zeros the relative
+mapping, so the hand never snaps back to an old orientation when you resume.
+Press `0` at any time to make the current phone attitude the new zero: the hand
+keeps its current orientation and continues (or starts) following from there.
+For headless runs, `--phone-follow` starts following at the first ready sample.
+A stale sample (default 0.35 s) freezes the hand and turns follow off while the
+camera path continues; press `0` after recovery to re-zero and resume.
+
+`shadowlink phone-test --host 192.0.2.10 --seconds 10` prints the connection
+state, sample rate, quaternion, Euler angles, and relative axis-angle.
+`--list` prints the experiment's buffer names and the source that was selected.
+`phone.mount_preset` selects the physical mounting. The default `back` matches
+the wrist strap: phone top toward the fingers, charging port toward the elbow,
+and the back of the phone against the back of the hand. Use
+`--phone-mount in_hand` when the phone is held flat in the palm with the screen
+facing away from the palm; the two differ by a 180° rotation about the phone's
+long axis. `phone.gain` scales the motion and `phone.max_angle_deg` is an
+optional limit (default `180`, meaning no clamp). `phone.pivot` selects the
+rotation centre: `wrist` (default), `forearm`, or `palm`. The passive viewer
+draws an RGB triad at the zero hand orientation, and the HUD prints that zero
+as `p/r/y` Euler angles.
+
+> **Security:** phyphox Remote Access is unauthenticated plain HTTP. Use it only
+> on a trusted LAN, never forward the port to the internet, and stop Remote
+> Access when you are done. ShadowLink only makes outbound requests; it never
+> listens for phone connections and never persists the phone address.
+
+See [docs/PHONE.md](docs/PHONE.md) for setup, axis tuning, and limitations.
 
 ## Performance
 
@@ -270,6 +346,9 @@ pytest -m hamer -q
 SHADOWLINK_TEST_HAND_MODEL=D:/models/hamer/_DATA/mediapipe/hand_landmarker.task \
 SHADOWLINK_TEST_IMAGE=example_data/test5.jpg \
 pytest -m mediapipe -q
+
+# Real phone running phyphox
+SHADOWLINK_TEST_PHONE=1 SHADOWLINK_TEST_PHONE_HOST=192.0.2.10 pytest -m phone -q
 ```
 
 `tests/test_no_path_hacks.py` enforces that the installed package never changes
@@ -285,11 +364,14 @@ src/shadowlink/
 ├── types.py              immutable frames/detections/observations
 ├── app.py                the only orchestrator
 ├── cli.py                argparse entry point
+├── math3d.py             NumPy-only quaternion helpers
+├── phone/                phyphox HTTP client, attitude fallback, service
 ├── perception/           MediaPipe detector, HaMeR backend, worker, selector
-├── retarget/             geometry, mapping, smoothing, calibration
+├── retarget/             geometry, mapping, smoothing, macro pose, calibration
 ├── sim/                  MJCF loading, Shadow Hand, fixed-step clock, viewer
 ├── ui/                   overlay, telemetry, OpenCV window/recorder
-├── tools/                setup-models, doctor, tactile generator, render-pose
+├── tools/                setup-models, doctor, tactile generator,
+│                         phone-test, render-pose
 └── assets/shadow_hand/   MJCF, OBJ meshes, tactile XML, original licences
 ```
 
@@ -301,7 +383,8 @@ problems.
 ShadowLink's own code is MIT licensed. HaMeR is an MIT-licensed submodule;
 Shadow Hand assets are Apache-2.0 from MuJoCo Menagerie / Shadow Robot; MediaPipe
 is Apache-2.0. MANO and HaMeR checkpoints are **not** redistributed and remain
-subject to their original licences. See
+subject to their original licences. phyphox is a third-party app that is not
+bundled with this project; ShadowLink only reads its public HTTP interface. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Citation

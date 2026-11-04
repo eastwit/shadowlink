@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from shadowlink.math3d import q_from_axis_angle
 from shadowlink.paths import SCENE_XML
 from shadowlink.sim.model import load_model
 from shadowlink.sim.shadow_hand import ShadowHand
@@ -79,3 +80,64 @@ def test_touch_colors_track_force(hand):
 def test_update_touch_colors_validates_the_scale(hand):
     with pytest.raises(ValueError):
         hand.update_touch_colors(0.0)
+
+
+def _pivot_centroid(hand) -> np.ndarray:
+    import mujoco
+
+    from shadowlink.sim.shadow_hand import _PIVOT_BODIES
+
+    ids = [mujoco.mj_name2id(hand.model, mujoco.mjtObj.mjOBJ_BODY, name) for name in _PIVOT_BODIES]
+    return np.array([hand.data.xpos[index] for index in ids]).mean(axis=0)
+
+
+def _pivot_point(hand, mode: str) -> np.ndarray:
+    import mujoco
+
+    if mode == "palm":
+        return _pivot_centroid(hand)
+    name = "rh_wrist" if mode == "wrist" else "rh_forearm"
+    body_id = mujoco.mj_name2id(hand.model, mujoco.mjtObj.mjOBJ_BODY, name)
+    return np.array(hand.data.xpos[body_id], dtype=np.float64)
+
+
+@pytest.mark.parametrize("mode", ["palm", "wrist", "forearm"])
+def test_macro_pose_rotates_around_the_selected_pivot(model, mode):
+    import mujoco
+
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    hand = ShadowHand(model, data, macro_pivot=mode)
+    assert hand.macro_pivot == mode
+    pivot = hand.macro_pivot_world.copy()
+    np.testing.assert_allclose(pivot, _pivot_point(hand, mode), atol=1e-9)
+    qpos_before = hand.qpos.copy()
+    quat = q_from_axis_angle([0.0, 0.0, 1.0], np.pi / 2)
+    assert hand.set_macro_pose(quat)
+    mujoco.mj_forward(hand.model, hand.data)
+    np.testing.assert_allclose(_pivot_point(hand, mode), pivot, atol=1e-9)
+    np.testing.assert_allclose(hand.macro_pose, quat, atol=1e-12)
+    np.testing.assert_allclose(hand.qpos, qpos_before, atol=1e-12)
+
+
+def test_invalid_macro_pivot_is_rejected(model):
+    import mujoco
+
+    with pytest.raises(ValueError, match="macro_pivot"):
+        ShadowHand(model, mujoco.MjData(model), macro_pivot="elbow")
+
+
+def test_macro_pose_reset_and_validation(hand):
+    import mujoco
+
+    mujoco.mj_forward(hand.model, hand.data)
+    initial = hand.macro_pose.copy()
+    pivot = hand.macro_pivot_world.copy()
+    assert not hand.set_macro_pose(None)
+    with pytest.raises(ValueError):
+        hand.set_macro_pose([np.nan, 0.0, 0.0, 0.0])
+    hand.set_macro_pose(q_from_axis_angle([1.0, 0.0, 0.0], 0.4))
+    hand.reset_macro_pose()
+    mujoco.mj_forward(hand.model, hand.data)
+    np.testing.assert_allclose(hand.macro_pose, initial, atol=1e-12)
+    np.testing.assert_allclose(hand.macro_pivot_world, pivot, atol=1e-12)

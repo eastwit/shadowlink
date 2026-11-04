@@ -31,6 +31,7 @@ def test_model_dimensions(model):
     assert model.nq == 24
     assert model.nv == 24
     assert model.nu == 20
+    assert model.nmocap == 1
     assert model.nsensor == 120
     assert model.opt.timestep == pytest.approx(0.002)
 

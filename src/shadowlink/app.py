@@ -11,7 +11,8 @@ from dataclasses import replace
 import mujoco
 
 from shadowlink.capture import open_source
-from shadowlink.config import AppConfig
+from shadowlink.config import AppConfig, ConfigError
+from shadowlink.math3d import q_euler_deg
 from shadowlink.paths import (
     KEYFRAMES_XML,
     SCENE_XML,
@@ -22,8 +23,11 @@ from shadowlink.paths import (
 from shadowlink.perception.base import create_backend, create_detector
 from shadowlink.perception.selector import DetectionSelector
 from shadowlink.perception.worker import PerceptionService
+from shadowlink.phone import NullPhoneSource, PhyphoxService
+from shadowlink.phone.client import parse_host_port
 from shadowlink.retarget.calibration import CalibrationError, CalibrationStore, Neutral
 from shadowlink.retarget.geometry import HandGeometryError
+from shadowlink.retarget.macro_pose import MacroPoseController, MacroPoseSettings
 from shadowlink.retarget.mapper import Retargeter
 from shadowlink.retarget.smoothing import TargetController
 from shadowlink.sim.model import load_model, load_start_pose
@@ -47,6 +51,7 @@ class TeleopApp:
         *,
         source=None,
         perception=None,
+        phone_source=None,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -56,10 +61,30 @@ class TeleopApp:
 
         self.model, self.layout = load_model(SCENE_XML)
         self.data = mujoco.MjData(self.model)
-        self.hand = ShadowHand(self.model, self.data, self.layout)
+        self.hand = ShadowHand(
+            self.model,
+            self.data,
+            self.layout,
+            macro_pivot=config.phone.pivot,
+        )
         self.start_ctrl = load_start_pose(self.model, config.sim.start_pose, KEYFRAMES_XML)
         self.hand.reset(self.start_ctrl)
         mujoco.mj_forward(self.model, self.data)
+
+        self.macro = MacroPoseController(
+            MacroPoseSettings.from_config(config.phone),
+            self.hand.macro_pose,
+        )
+        self.following = False
+        self._auto_follow_armed = bool(config.phone.auto_follow)
+        self._phone_enabled = config.phone.source != "none"
+        if phone_source is not None:
+            self.orientation = phone_source
+            self._phone_enabled = True
+        elif config.phone.source == "phyphox":
+            self.orientation = PhyphoxService(config.phone, clock=clock)
+        else:
+            self.orientation = NullPhoneSource()
 
         self.calibration_store = CalibrationStore(resolve_calibration_path(config.data.calibration))
         calibration = self._load_calibration()
@@ -135,6 +160,7 @@ class TeleopApp:
         frames = 0
         limit = max_frames or self.config.runtime.max_frames or 0
         self.perception.start()
+        self.orientation.start()
         self.viewer.launch()
         self.stepper.reset(self._clock())
         self.controller.reset()
@@ -166,9 +192,38 @@ class TeleopApp:
 
                 targets = self.controller.update(target, now)
                 self.hand.set_targets(targets)
-                for _ in range(self.stepper.advance(now)):
-                    mujoco.mj_step(self.model, self.data)
+
+                sample = self.orientation.latest()
+                if (
+                    self._auto_follow_armed
+                    and not self.following
+                    and sample is not None
+                    and sample.ready
+                ):
+                    self._auto_follow_armed = False
+                    self._enable_follow(sample)
+                macro_changed = False
+                if self.following:
+                    if sample is None:
+                        self.following = False
+                        self._last_status = "phone lost; macro pose frozen (press 0 or g)"
+                    else:
+                        quat = self.macro.update(sample, now, True)
+                        if quat is not None:
+                            macro_changed = self.hand.set_macro_pose(quat)
+
+                steps = self.stepper.advance(now)
+                if steps:
+                    for _ in range(steps):
+                        mujoco.mj_step(self.model, self.data)
+                elif macro_changed:
+                    mujoco.mj_forward(self.model, self.data)
                 self.hand.update_touch_colors(self.config.sim.touch_force_scale)
+                if self._phone_enabled:
+                    self.viewer.set_macro_zero(
+                        self.macro.zero_hand,
+                        self.hand.macro_pivot_world,
+                    )
                 self.viewer.sync()
 
                 self.telemetry.tick(now)
@@ -180,6 +235,10 @@ class TeleopApp:
                     break
                 if key == ord("c"):
                     self._calibrate_with(observation, now)
+                elif key == ord("g"):
+                    self._toggle_follow()
+                elif key == ord("0"):
+                    self._zero_phone()
                 elif key == ord("r"):
                     self._reset()
                 if limit and frames >= limit:
@@ -277,8 +336,42 @@ class TeleopApp:
         log.info("%s -> %s", self._last_status, self.calibration_store.path)
         return True
 
+    def _enable_follow(self, sample) -> None:
+        self.macro.set_zero(sample, self.hand.macro_pose)
+        self.following = True
+        self._last_status = "phone follow on (relative to current pose)"
+
+    def _toggle_follow(self) -> None:
+        if self.following:
+            self.following = False
+            self._auto_follow_armed = False
+            self._last_status = "phone follow off; macro pose frozen"
+            return
+        sample = self.orientation.latest()
+        if sample is None or not sample.ready:
+            self._last_status = "phone not ready; check phyphox remote access"
+            return
+        self._enable_follow(sample)
+
+    def _zero_phone(self) -> bool:
+        """Re-zero the relative mapping at the current phone attitude."""
+        sample = self.orientation.latest()
+        if sample is None or not sample.ready:
+            self._last_status = "phone not ready; cannot zero (check phyphox)"
+            return False
+        self._enable_follow(sample)
+        self._auto_follow_armed = False
+        self._last_status = "phone zeroed at current attitude"
+        pitch, roll, yaw = q_euler_deg(self.macro.zero_hand)
+        log.info("phone mapping zeroed (hand p/r/y %+.1f %+.1f %+.1f)", pitch, roll, yaw)
+        return True
+
     def _reset(self) -> None:
         self.controller.reset()
+        self.following = False
+        self._auto_follow_armed = False
+        self.macro.reset()
+        self.hand.reset_macro_pose()
         self.hand.reset(self.start_ctrl)
         mujoco.mj_forward(self.model, self.data)
         self._last_status = "reset to start pose"
@@ -320,7 +413,19 @@ class TeleopApp:
         lines.extend(self.telemetry.hud_lines())
         peaks = self.hand.peak_touch
         lines.append("touch " + " ".join(f"{name} {value:.2f}" for name, value in peaks.items()))
-        lines.append("[c]alibrate [r]eset [q]uit")
+        if self._phone_enabled:
+            health = self.orientation.health
+            follow = "on" if self.following else "off"
+            host = health.host or "-"
+            lines.append(
+                f"phone {follow} | {health.state} | {host} | "
+                f"{health.rate_hz:.0f} Hz | {health.message}"
+            )
+            pitch, roll, yaw = q_euler_deg(self.macro.zero_hand)
+            lines.append(f"zero p/r/y {pitch:+5.1f} {roll:+5.1f} {yaw:+5.1f}")
+            lines.append("[g]phone [0]zero [c]alibrate [r]eset [q]uit")
+        else:
+            lines.append("[c]alibrate [r]eset [q]uit")
         if extra:
             lines.extend(extra)
         if self._last_status:
@@ -358,6 +463,10 @@ class TeleopApp:
             self.perception.close()
         except Exception:
             log.exception("error closing perception")
+        try:
+            self.orientation.close()
+        except Exception:
+            log.exception("error closing phone source")
         try:
             self.viewer.close()
         except Exception:
@@ -430,6 +539,28 @@ def apply_cli_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfi
         checkpoint=get("checkpoint"),
         hand_model=get("hand_model"),
         calibration=get("calibration"),
+    )
+    phone_host = get("phone_host")
+    phone_port = get("phone_port")
+    if phone_host is not None:
+        try:
+            parsed_host, parsed_port = parse_host_port(
+                phone_host, default_port=phone_port or config.phone.port
+            )
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        phone_host = parsed_host
+        if phone_port is None:
+            phone_port = parsed_port
+    config = _set(
+        config,
+        "phone",
+        source=get("phone"),
+        host=phone_host,
+        port=phone_port,
+        auto_discover=get("phone_scan"),
+        auto_follow=get("phone_follow"),
+        mount_preset=get("phone_mount"),
     )
     config = _set(
         config,

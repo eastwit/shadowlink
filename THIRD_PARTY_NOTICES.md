@@ -39,3 +39,14 @@ license in `LICENSE` applies only to ShadowLink's own source code.
 
 - Project: https://github.com/google-deepmind/mujoco
 - License: Apache License 2.0.
+
+## phyphox (optional phone attitude source)
+
+- Project: https://phyphox.org
+- License: phyphox is a separate third-party application and is **not** bundled
+  with or redistributed by ShadowLink.
+- Usage: optional. ShadowLink reads the app's documented Remote Access HTTP
+  endpoints (`/config`, `/get`, `/control`) over the local network. No phone
+  code, data, or device identifiers are included in this repository.
+- Security: Remote Access is unauthenticated plain HTTP. Use it only on a
+  trusted local network and never expose it to the internet.

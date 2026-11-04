@@ -145,6 +145,110 @@ physics, retargeting, or telemetry.
 Recording requires `--show` or an explicit output that triggers preview
 generation; `--no-show --no-viewer` without `--output` does not create frames.
 
+## Phone problems
+
+See [PHONE.md](PHONE.md) for setup and axis tuning.
+
+### `cannot connect to ...` / `cannot reach phone`
+
+- The phone and computer must be on the same network. Guest Wi-Fi and many
+  routers' "client isolation" settings block device-to-device traffic.
+- Confirm that Remote Access is enabled and note the address shown by phyphox.
+  Opening `http://<phone-ip>:8080/config` in a desktop browser should return
+  JSON.
+- A DHCP lease change gives the phone a new IP. Pass the new
+  `--phone-host`, or enable `--phone-scan` / `phone.auto_discover`.
+- Scanning only covers the local `/24` of the default route. With a VPN or
+  several network adapters, prefer an explicit host.
+
+### `phone host not configured`
+
+Pass `--phone-host IP[:PORT]`, set `phone.host` in YAML, or enable
+`--phone-scan`. Scanning is deliberately opt-in.
+
+### `no phyphox device found on the local network`
+
+The scan did not find a reachable `/config` with a `buffers` list. Use an
+explicit host; check that the phone's screen is on and Remote Access is still
+running.
+
+### `connecting` / `waiting for phone data`
+
+- The experiment may be paused. `phone.auto_start` (default on) sends
+  `/control?cmd=start` once after connecting.
+- The experiment may expose no attitude buffers. Run
+  `shadowlink phone-test --host <ip> --list` to see the buffer names. Add an
+  **Attitude** output, or at least Gyroscope and Accelerometer X/Y/Z outputs.
+
+### Health says `paused`
+
+Measurement was paused on the phone. Press play in phyphox, or set
+`phone.auto_start: true`. The hand stays frozen while paused.
+
+### `stale` or `phone lost; macro pose frozen`
+
+No fresh sample arrived within `phone.stale_timeout_s` (default 0.35 s), so the
+app froze the macro pose by design. Check Wi-Fi, lower `phone.poll_hz` if the
+phone cannot keep up, or raise `phone.timeout_s`. Press `0` after the HUD reports
+`running`; it re-zeros at the current attitude and resumes following.
+
+### The hand does not follow
+
+- `g` and `0` are handled by the OpenCV preview window. They do nothing with
+  `--no-show` or when the MuJoCo viewer has focus. For headless runs use
+  `--phone-follow`.
+- `phone.source` must be `phyphox` (or a source must be injected), and a ready
+  sample must have arrived.
+- The HUD shows `phone off/on | state | host | rate | message`.
+
+### The hand spins in place or the pivot looks wrong
+
+`phone.pivot` selects the fixed world point. The default is `wrist`, which keeps
+the wrist joint in place and swings the hand from there. Use
+`--set phone.pivot=forearm` to rotate the whole forearm from its proximal end
+(a larger sweep, like turning at the elbow), or `--set phone.pivot=palm` to
+restore the older palm/finger-centroid behaviour. If the hand looks like it is
+rotating around your fingers, `palm` is probably still selected.
+
+### Movement is rotated or a sign is wrong
+
+ShadowLink publishes the phone attitude in a documented body frame: `x` points
+out of the charging port, `y` across the phone width, `z` out of the screen.
+`phone.mount_preset` selects the physical mounting. `back` (default) assumes the
+phone is strapped to the back of the hand; `in_hand` assumes it is held flat in
+the palm, screen facing away from the palm. The two differ by a 180° rotation
+about the phone's long axis, so if rotations about that axis are correct but the
+other two are reversed, switch presets with `--phone-mount in_hand` or
+`--phone-mount back`. For any other mount, set `mount_preset: custom` and tune
+`phone.mount_w/x/y/z` (a normalized quaternion), not the gain, until the hand's
+yaw/pitch/roll match the phone.
+`shadowlink phone-test` prints Euler angles and relative axis-angle so you can
+identify which axis is wrong. If the mapping feels too sensitive, lower
+`phone.gain`; if it jitters, raise `phone.smoothing_tau_s` or lower
+`phone.max_rate_rad_s`.
+
+### The hand stops rotating past a certain angle
+
+`phone.max_angle_deg` defaults to `180`, which disables the clamp. If the hand
+stops well before the phone has turned over, check whether a lower value was set
+in YAML or with `--set phone.max_angle_deg=...`. The deadzone and rate limit
+also affect small or fast motions.
+
+### I cannot tell what the zero orientation is
+
+The viewer draws a small RGB triad at the pivot using the hand orientation
+captured at zero: red = hand `+x` (palmar at rest), green = `+y`, blue = `+z`
+(distal). The HUD line `zero p/r/y` reports the same orientation as Euler
+angles. Press `0` to recapture it at the current pose; `r` returns to the start
+pose.
+
+### Yaw drifts or attitude is noisy
+
+Use an experiment with an **Attitude** output; it is the fused rotation vector
+and is much better than the raw-gyroscope fallback. The fallback drifts without
+a magnetometer and takes about 20 samples to initialise. Following is relative:
+press `0` to re-zero at any time. There is no absolute-heading mode.
+
 ## Windows temp-directory permission errors in pytest
 
 Use a project-local base temp directory:

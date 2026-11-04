@@ -70,6 +70,7 @@ markers = [
   "hamer: requires the HaMeR checkpoint and torch",
   "mediapipe: requires the MediaPipe hand_landmarker.task model",
   "gpu: requires a CUDA device",
+  "phone: requires a physical phone running phyphox",
   "slow: slow integration test",
 ]
 

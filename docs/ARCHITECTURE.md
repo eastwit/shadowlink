@@ -11,16 +11,17 @@ that loop testable, configurable, and safe to publish.
 cli.py / __main__.py
         │
         ▼
-app.py (TeleopApp) ──────────────────────────────┐
-   │            │            │                   │
-   ▼            ▼            ▼                   ▼
-capture.py   perception/   retarget/          sim/ + ui/
-             │            │                   │
-             ▼            ▼                   ▼
-          types.py     geometry.py         model.py
-                       mapper.py           shadow_hand.py
-                       smoothing.py        stepping.py
-                       calibration.py      viewer.py
+app.py (TeleopApp) ─────────────────────────────────┐
+   │            │            │           │          │
+   ▼            ▼            ▼           ▼          ▼
+capture.py   perception/   retarget/   phone/    sim/ + ui/
+             │            │           │          │
+             ▼            ▼           ▼          ▼
+          types.py     geometry.py  client.py   model.py
+                       mapper.py    attitude.py shadow_hand.py
+                       smoothing.py service.py  stepping.py
+                       calibration.py           viewer.py
+                       macro_pose.py
 ```
 
 Dependency rules, enforced by review and tests:
@@ -28,10 +29,17 @@ Dependency rules, enforced by review and tests:
 - `types.py` depends only on NumPy (plus the standard library).
 - `retarget/` never imports `sim/`; it receives an `ActuatorLayout` through a
   `TYPE_CHECKING`-only import.
-- `sim/` never imports `perception/` or `retarget/`.
+- `sim/` never imports `perception/`, `retarget/`, or `phone/`.
+- `phone/` never imports `sim/` or `retarget/`; it publishes an immutable
+  orientation sample and knows nothing about MuJoCo. It uses only the standard
+  library, NumPy, and `math3d.py`.
+- `retarget/macro_pose.py` depends only on `math3d.py` and a small sample
+  protocol; it never imports `phone/`.
+- `math3d.py` depends only on NumPy and the standard library.
 - Only `app.py` orchestrates the layers.
 - Only `cli.py` uses `argparse`.
-- `hamer` is imported lazily inside `perception/hamer_backend.py`.
+- `hamer` is imported lazily inside `perception/hamer_backend.py`; the phyphox
+  transport has no third-party dependency.
 - No module calls `os.chdir` or edits `sys.path`.
 
 ## Frame path
@@ -112,6 +120,80 @@ cannot silently swap fingers.
 Calibration subtracts the neutral metrics before mapping, so an open hand maps
 to the neutral actuator vector instead of a hard-coded zero.
 
+## Phone and macro pose
+
+The optional phone path is deliberately separate from finger control.
+
+`phone/client.py` is a small outbound-only HTTP client for the third-party
+phyphox app. It reads `/config` for buffer names, `/get?name=...` for the newest
+values, and `/control?cmd=start` when a paused experiment should be resumed.
+Every request opens a fresh connection because phyphox's server closes the
+socket after each reply. Responses are capped at 1 MiB and must be finite JSON
+objects. `pick_attitude` finds a complete `w/x/y/z` quaternion group (preferring
+one with a time axis); `pick_vector` finds gyroscope/accelerometer/magnetometer
+axes when the experiment has no fused attitude.
+
+`phone/attitude.py` is the fallback for raw-IMU experiments: the Mahony filter
+integrates gyroscope readings with gravity and optional magnetometer correction.
+The primary path uses phyphox's fused rotation vector directly and does not
+depend on host-side timing.
+
+`phone/service.py` owns exactly one daemon thread. It polls the configured host
+at `poll_hz`, applies a fixed phone-body twist, publishes an immutable
+`PhoneSample` into a latest-value slot, re-reads `/config` when the experiment
+session changes, and maintains a `PhoneHealth` record. It only discovers hosts
+when `auto_discover` is explicitly enabled. It never touches MuJoCo.
+
+`retarget/macro_pose.py` converts a sample into a hand-base quaternion:
+
+```text
+q_rel    = conj(q_zero) ⊗ q_now             (rotation since the toggle)
+angle    = 0 if angle < deadzone else min(angle * gain, max_angle)
+q_hand   = q_mount ⊗ q_rel ⊗ conj(q_mount)  (phone body → hand base)
+q_target = q_ref_hand ⊗ q_hand              (hand orientation at toggle)
+q_out    = slerp(q_out, q_target, alpha)    (time constant + rate limit)
+```
+
+`max_angle` defaults to 180°, so the clamp is inactive and the full relative
+rotation passes through. `q_mount` comes from `phone.mount_preset`: `back`
+(default, phone strapped to the back of the hand), `in_hand` (phone held flat in
+the palm with the screen facing away from the palm), or `custom` (the
+`mount_w/x/y/z` fields). The two presets differ by a 180° rotation about the
+phone's long axis, so only the width and screen-normal axes change sign between
+them.
+
+`q_zero` and `q_ref_hand` are captured together when follow is enabled, so
+freezing and resuming does not snap the hand back. When the sample is missing,
+not ready, or stale, `update` returns `None` and the base orientation is frozen.
+
+The app writes the result to `ShadowHand.set_macro_pose`, which sets the
+`rh_forearm` mocap body. The rotation centre is selected by `phone.pivot` and
+captured at rest: `wrist` (default) holds the `rh_wrist` joint fixed, `forearm`
+holds the proximal end of the forearm mesh fixed, and `palm` holds the old
+palm/finger centroid fixed. The mocap position compensates so the chosen world
+point does not move. This changes `nmocap` to 1 but leaves `nq`, `nv`, `nu`, the
+keyframes, and the 120 tactile sensors unchanged. If a frame advances zero
+physics steps, the app calls `mj_forward` once so the viewer reflects the new
+base orientation.
+
+Because the base is kinematic, the hand does not receive reaction forces. The
+current scene has no grasped objects; adding one would require a free joint or a
+force-aware attachment.
+
+The `g` toggle and `--phone-follow` only enable or disable this layer. The `0`
+key re-zeros the relative mapping without toggling, using the current phone
+attitude and the current hand orientation. These actions do not modify the
+finger retargeter or the `TargetController` state machine.
+
+`MacroPoseController.zero_hand` exposes the hand orientation captured with the
+zero (`q_ref_hand`, or the initial orientation before following starts). Each
+frame the app passes it and `ShadowHand.macro_pivot_world` to
+`Viewer.set_macro_zero`. While synced, the viewer writes three `mjv_connector`
+arrows into `user_scn`: red for hand-base `+x`, green for `+y`, blue for `+z`,
+offset along the palmar axis so the triad is visible outside the mesh. Clearing
+the zero also clears those user geoms. This is display-only and does not touch
+the physics state.
+
 ## Simulation
 
 `sim/model.py` loads the scene with `mujoco.MjModel.from_xml_path`, validates
@@ -143,10 +225,12 @@ fails if they diverge.
 ## Threading and UI rules
 
 - Perception threads only touch immutable data and their own model/session.
+- The phone service is a single thread; it owns HTTP access and the fusion
+  state, and publishes only immutable samples.
 - OpenCV HighGUI calls and MuJoCo viewer calls happen only on the main thread.
-- Cleanup order is capture → perception → viewer → recorder.
-- The perception service joins its threads with a timeout and logs any that fail
-  to stop.
+- Cleanup order is capture → perception → phone → viewer → preview → recorder.
+- The perception and phone services join their threads with a timeout and log
+  any that fail to stop.
 
 ## Extension points
 
@@ -157,3 +241,6 @@ fails if they diverge.
 - New mapping: change `Retargeter.map_metrics`; semantic names keep the XML
   coupling explicit.
 - New camera transport: implement the `FrameSource` protocol in `capture.py`.
+- New orientation source: implement `start`, `close`, `latest`, and `health`
+  (see the `PhoneSource` protocol in `phone/service.py`); the macro layer only
+  needs `quat_wxyz`, `timestamp`, and `ready`.
