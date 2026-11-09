@@ -3,8 +3,8 @@
 # Override from the command line with e.g. --set retarget.flex_gain=1.2
 
 capture:
-  source: camera          # camera | video
-  camera: "0"             # camera index, file path, or stream URL
+  source: camera          # camera | video | rgbd
+  camera: "0"             # camera index, file path, or stream URL (RGBD color index)
   video: null             # used when source: video
   width: 0                # 0 = native
   height: 0
@@ -12,6 +12,14 @@ capture:
   api: any                # any | dshow | msmf
   buffer_size: 1
   fps: 0.0                # 0 = source frame rate
+  depth_sdk: null         # directory containing OpenNI2.dll (or set OPENNI2_REDIST)
+  depth_width: 640
+  depth_height: 480
+  depth_fps: 30
+  depth_fx: null          # null = derive from the device FOV
+  depth_fy: null
+  depth_cx: null
+  depth_cy: null
 
 perception:
   backend: hamer          # hamer | mediapipe
@@ -87,6 +95,33 @@ phone:
   max_angle_deg: 180.0    # 180 = no clamp on the relative rotation
   smoothing_tau_s: 0.06
   max_rate_rad_s: 6.0
+
+position:
+  enabled: true           # only takes effect when capture.source = rgbd
+  preset: palm            # fallback when 3D landmarks are unavailable
+  hand_relative: true     # follow thumb / middle-finger directions in any pose
+  invert_x: false         # flip the corresponding world axis
+  invert_y: false
+  invert_z: false
+  gain: 1.0               # 1.0 = relative 1:1
+  deadzone_m: 0.01
+  max_offset_m: 0.25
+  min_depth_mm: 150.0
+  max_depth_mm: 1500.0
+  sample_radius_px: 5
+  min_valid_pixels: 8
+  min_landmarks: 3
+  max_spread_m: 0.12
+  temporal_window: 3
+  max_depth_skew_s: 0.15
+  stale_timeout_s: 0.5
+  auto_zero: true
+  align_offset_x: 0.0     # normalized color->depth alignment trim
+  align_offset_y: 0.0
+  min_cutoff: 1.0
+  beta: 0.1
+  d_cutoff: 1.0
+  max_rate_m_s: 0.8
 
 runtime:
   max_frames: 0

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import time
 from collections.abc import Callable
 from dataclasses import replace
 
 import mujoco
+import numpy as np
 
 from shadowlink.capture import open_source
 from shadowlink.config import AppConfig, ConfigError
@@ -25,6 +27,15 @@ from shadowlink.perception.selector import DetectionSelector
 from shadowlink.perception.worker import PerceptionService
 from shadowlink.phone import NullPhoneSource, PhyphoxService
 from shadowlink.phone.client import parse_host_port
+from shadowlink.position import (
+    DepthFrameLog,
+    PalmMeasurement,
+    PositionController,
+    PositionSettings,
+    camera_to_local_axes,
+    hand_base_rotation,
+    sample_palm_position,
+)
 from shadowlink.retarget.calibration import CalibrationError, CalibrationStore, Neutral
 from shadowlink.retarget.geometry import HandGeometryError
 from shadowlink.retarget.macro_pose import MacroPoseController, MacroPoseSettings
@@ -117,7 +128,26 @@ class TeleopApp:
             )
         self.perception = perception
 
-        self.viewer = Viewer(self.model, self.data, enabled=config.sim.viewer)
+        self.position_enabled = bool(config.position.enabled and config.capture.source == "rgbd")
+        self.position: PositionController | None = (
+            PositionController(PositionSettings.from_config(config.position))
+            if self.position_enabled
+            else None
+        )
+        self.positioning = self.position_enabled
+        self._depth_log: DepthFrameLog | None = None
+        self._anatomy_axes: np.ndarray | None = None
+        if self.position_enabled:
+            fps = self.source.fps or 30.0
+            maxlen = max(8, int(math.ceil(config.perception.max_age_s * fps)) + 4)
+            self._depth_log = DepthFrameLog(maxlen=maxlen)
+
+        self.viewer = Viewer(
+            self.model,
+            self.data,
+            enabled=config.sim.viewer,
+            distance=0.75 if self.position_enabled else None,
+        )
         self.preview = PreviewWindow(config.ui.window_name, enabled=config.ui.show)
         self.telemetry = Telemetry()
         self.recorder: VideoRecorder | None = None
@@ -172,6 +202,8 @@ class TeleopApp:
                 frame = self.source.read()
                 if frame is None:
                     break
+                if self._depth_log is not None:
+                    self._depth_log.add(frame)
                 if frame.seq % max(1, self.config.perception.skip) == 0:
                     self.perception.submit(frame)
 
@@ -190,6 +222,15 @@ class TeleopApp:
                     except HandGeometryError as exc:
                         log.debug("skipping degenerate observation: %s", exc)
 
+                measurement = self._palm_measurement(observation, now)
+                translation = None
+                if self.position is not None:
+                    if self.positioning:
+                        rotation = self._position_rotation(observation)
+                        translation = self.position.update(measurement, now, rotation)
+                    else:
+                        translation = self.position.output
+
                 targets = self.controller.update(target, now)
                 self.hand.set_targets(targets)
 
@@ -203,14 +244,15 @@ class TeleopApp:
                     self._auto_follow_armed = False
                     self._enable_follow(sample)
                 macro_changed = False
+                quat = None
                 if self.following:
                     if sample is None:
                         self.following = False
                         self._last_status = "phone lost; macro pose frozen (press 0 or g)"
                     else:
                         quat = self.macro.update(sample, now, True)
-                        if quat is not None:
-                            macro_changed = self.hand.set_macro_pose(quat)
+                if quat is not None or self.position is not None:
+                    macro_changed = self.hand.set_macro_pose(quat, translation)
 
                 steps = self.stepper.advance(now)
                 if steps:
@@ -222,7 +264,7 @@ class TeleopApp:
                 if self._phone_enabled:
                     self.viewer.set_macro_zero(
                         self.macro.zero_hand,
-                        self.hand.macro_pivot_world,
+                        self.hand.macro_origin_world,
                     )
                 self.viewer.sync()
 
@@ -239,6 +281,8 @@ class TeleopApp:
                     self._toggle_follow()
                 elif key == ord("0"):
                     self._zero_phone()
+                elif key == ord("p"):
+                    self._toggle_position()
                 elif key == ord("r"):
                     self._reset()
                 if limit and frames >= limit:
@@ -337,9 +381,9 @@ class TeleopApp:
         return True
 
     def _enable_follow(self, sample) -> None:
-        self.macro.set_zero(sample, self.hand.macro_pose)
+        self.macro.set_zero(sample)
         self.following = True
-        self._last_status = "phone follow on (relative to current pose)"
+        self._last_status = "phone follow on (hand aligned to phone attitude)"
 
     def _toggle_follow(self) -> None:
         if self.following:
@@ -354,25 +398,47 @@ class TeleopApp:
         self._enable_follow(sample)
 
     def _zero_phone(self) -> bool:
-        """Re-zero the relative mapping at the current phone attitude."""
+        """Re-anchor the world frame at the current phone attitude."""
         sample = self.orientation.latest()
         if sample is None or not sample.ready:
             self._last_status = "phone not ready; cannot zero (check phyphox)"
             return False
         self._enable_follow(sample)
         self._auto_follow_armed = False
-        self._last_status = "phone zeroed at current attitude"
+        self._last_status = "phone world frame set; hand aligned to phone"
         pitch, roll, yaw = q_euler_deg(self.macro.zero_hand)
-        log.info("phone mapping zeroed (hand p/r/y %+.1f %+.1f %+.1f)", pitch, roll, yaw)
+        log.info("phone world frame set (hand p/r/y %+.1f %+.1f %+.1f)", pitch, roll, yaw)
+        return True
+
+    def _toggle_position(self) -> bool:
+        """Toggle world translation; re-enabling re-zeros at the current palm."""
+        if self.position is None:
+            self._last_status = "position control needs --source rgbd"
+            return False
+        if self.positioning:
+            self.positioning = False
+            self._last_status = "position follow off; base translation frozen"
+            return True
+        self.positioning = True
+        if self.position.zero(self._clock()):
+            self._last_status = "position follow on; zeroed at current palm"
+        else:
+            self._last_status = "position follow on; zeroing at next depth sample"
         return True
 
     def _reset(self) -> None:
         self.controller.reset()
+        if self.position is not None:
+            self.position.reset()
+            self.positioning = self.position_enabled
+        if self._depth_log is not None:
+            self._depth_log.clear()
         self.following = False
         self._auto_follow_armed = False
         self.macro.reset()
         self.hand.reset_macro_pose()
         self.hand.reset(self.start_ctrl)
+        self.hand.reset_free_bodies()
         mujoco.mj_forward(self.model, self.data)
         self._last_status = "reset to start pose"
 
@@ -385,6 +451,74 @@ class TeleopApp:
         if now - result.capture_ts > self.config.perception.max_age_s:
             return None
         return result.observations[0]
+
+    def _palm_measurement(
+        self,
+        observation: HandObservation | None,
+        now: float,
+    ) -> PalmMeasurement | None:
+        """Sample the palm for the freshest frame with depth and 2D landmarks.
+
+        The detector stage publishes its landmarks before HaMeR inference
+        finishes, so preferring that view lets the translation update at
+        detector rate instead of the slower inference rate.
+        """
+        if self._depth_log is None:
+            return None
+        candidates: list[tuple[int, float, np.ndarray | None]] = []
+        getter = getattr(self.perception, "latest_detection", None)
+        pending = getter() if callable(getter) else None
+        if pending is not None:
+            frame, detection = pending
+            if now - frame.capture_ts <= self.config.perception.max_age_s:
+                candidates.append((frame.seq, frame.capture_ts, detection.landmarks_2d))
+        if observation is not None:
+            keypoints = observation.detector_landmarks_2d
+            if keypoints is None:
+                keypoints = observation.keypoints_2d
+            candidates.append((observation.frame_seq, observation.capture_ts, keypoints))
+        for frame_seq, capture_ts, keypoints in candidates:
+            if keypoints is None:
+                continue
+            record = self._depth_log.get(frame_seq)
+            if record is None:
+                continue
+            if abs(record.depth_ts - record.color_ts) > self.config.position.max_depth_skew_s:
+                continue
+            return sample_palm_position(
+                record.depth_mm,
+                record.intrinsics,
+                keypoints,
+                mirrored=record.mirrored,
+                color_size=record.color_size,
+                cfg=self.config.position,
+                frame_seq=frame_seq,
+                capture_ts=capture_ts,
+                depth_ts=record.depth_ts,
+            )
+        return None
+
+    def _position_rotation(self, observation: HandObservation | None) -> np.ndarray | None:
+        """Camera-to-world rotation for anatomical, hand-relative translation.
+
+        The anatomical axes come from the last fresh 3D observation, while the
+        world rotation uses the current macro pose every frame.  Position
+        samples therefore keep their hand-relative direction even when they
+        arrive between HaMeR results.
+        """
+        if not self.config.position.hand_relative:
+            return None
+        if observation is not None:
+            axes = camera_to_local_axes(
+                observation.keypoints_3d,
+                observation.apparent_side,
+                observation.anatomical_side,
+            )
+            if axes is not None:
+                self._anatomy_axes = axes
+        if self._anatomy_axes is None:
+            return None
+        return hand_base_rotation(self.hand.macro_pose) @ self._anatomy_axes
 
     def _render(
         self,
@@ -423,9 +557,29 @@ class TeleopApp:
             )
             pitch, roll, yaw = q_euler_deg(self.macro.zero_hand)
             lines.append(f"zero p/r/y {pitch:+5.1f} {roll:+5.1f} {yaw:+5.1f}")
-            lines.append("[g]phone [0]zero [c]alibrate [r]eset [q]uit")
-        else:
-            lines.append("[c]alibrate [r]eset [q]uit")
+        if self.position is not None:
+            translation = self.position.output
+            follow = "on" if self.positioning else "off"
+            lines.append(
+                f"pos {follow} | {self.position.state} | "
+                f"t {translation[0]:+.2f} {translation[1]:+.2f} {translation[2]:+.2f} m"
+            )
+            camera = self.position.camera_position
+            if camera is not None:
+                lines.append(f"cam {camera[0]:+.2f} {camera[1]:+.2f} {camera[2]:+.2f} m")
+            depth_health = getattr(self.source, "depth_health", None)
+            if depth_health is not None:
+                lines.append(
+                    f"depth {depth_health.state} {depth_health.fps:.0f} Hz "
+                    f"{depth_health.message}".rstrip()
+                )
+        hints = []
+        if self._phone_enabled:
+            hints += ["[g]phone", "[0]zero"]
+        if self.position is not None:
+            hints += ["[p]pos"]
+        hints += ["[c]alibrate", "[r]reset", "[q]quit"]
+        lines.append(" ".join(hints))
         if extra:
             lines.extend(extra)
         if self._last_status:
@@ -507,6 +661,8 @@ def apply_cli_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfi
             capture["camera"] = camera
     if get("mirror") is not None:
         capture["mirror"] = bool(get("mirror"))
+    if get("depth_sdk") is not None:
+        capture["depth_sdk"] = get("depth_sdk")
     config = _set(config, "capture", **capture)
 
     config = _set(
@@ -520,6 +676,19 @@ def apply_cli_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfi
     )
     if get("smooth") is not None:
         config = _set(config, "smoothing", tau=float(get("smooth")))
+    position = {}
+    if get("position") is not None:
+        position["enabled"] = bool(get("position"))
+    if get("position_preset") is not None:
+        position["preset"] = get("position_preset")
+    if get("position_gain") is not None:
+        position["gain"] = float(get("position_gain"))
+    if get("position_deadzone") is not None:
+        position["deadzone_m"] = float(get("position_deadzone"))
+    if get("position_max_offset") is not None:
+        position["max_offset_m"] = float(get("position_max_offset"))
+    config = _set(config, "position", **position)
+
     config = _set(
         config,
         "sim",

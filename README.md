@@ -31,10 +31,23 @@ mapped frame by frame, so the robot follows the operator's motion continuously.
   read from the MJCF at startup, then checked. No duplicated constants.
 - **Tactile simulation**: 120 taxels (5 fingers × 6 × 4) with force-dependent
   blue→red colouring.
+- **Graspable scene**: a free 4 cm ball on a small stand at palm height. Move the
+  hand toward it and close your fingers; contact is physical, and `r` returns the
+  ball to its stand.
 - **Optional phone macro orientation**: a phone running the third-party
   [phyphox](https://phyphox.org) app adds 3-DOF yaw/pitch/roll to the whole hand
-  while the camera keeps controlling the fingers. Toggle with `g`; the hand
-  freezes when follow is off. Works over the LAN with no extra Python packages.
+  while the camera keeps controlling the fingers. The phone's attitude at the
+  zero instant is the world frame, and the hand's anatomical frame is kept
+  identical to the phone's (screen normal ↔ dorsum, top ↔ middle finger,
+  left ↔ hand left), so the hand starts in the phone's real attitude. Toggle
+  with `g`; the hand freezes when follow is off. Works over the LAN with no
+  extra Python packages.
+- **Optional RGBD whole-hand translation**: an Orbbec Astra depth camera
+  measures the palm's physical position and translates the whole hand 1:1
+  relative to the startup zero. The default mapping is anatomy-relative, so
+  moving toward your thumb moves the simulated thumb in any hand pose. Toggle
+  with `p`; works alongside phone orientation and finger retargeting. See
+  [docs/RGBD.md](docs/RGBD.md).
 - **Headless-friendly**: `--no-show --no-viewer`, synthetic frame sources, and a
   unit suite that needs no GPU, camera, or weights.
 - **No path hacks**: no `os.chdir`, no `sys.path.insert`, no hard-coded user
@@ -51,6 +64,7 @@ mapped frame by frame, so the robot follows the operator's motion continuously.
 | HaMeR backend | PyTorch 2.0–2.5, CUDA optional but strongly recommended |
 | GPU | Any CUDA GPU; measurements below use an RTX 4060 Laptop |
 | Phone (optional) | Android/iOS phone with [phyphox](https://phyphox.org) and Remote Access on the same LAN |
+| RGBD camera (optional) | Orbbec Astra (OpenNI2) plus a UVC colour camera, for whole-hand translation |
 
 Windows 11 and Linux are supported. The MuJoCo viewer and OpenCV preview are
 optional.
@@ -98,9 +112,17 @@ For CPU/MediaPipe-only use:
 pip install -e ".[dev]"
 ```
 
+RGBD position control needs the optional `openni` package and a local OpenNI2
+SDK:
+
+```bash
+pip install -e ".[dev,rgbd]"
+```
+
 Phone macro orientation needs no Python extra: install phyphox on the phone and
 enable its Remote Access server (plain HTTP on the local network). See
-[docs/PHONE.md](docs/PHONE.md).
+[docs/PHONE.md](docs/PHONE.md). For the depth camera and SDK setup, see
+[docs/RGBD.md](docs/RGBD.md).
 
 ### 3. Fetch the models
 
@@ -155,6 +177,10 @@ shadowlink demo
 # Add phone attitude control for whole-hand orientation
 shadowlink run --backend hamer --phone phyphox --phone-host 192.0.2.10 \
   --phone-follow --data-dir D:/models/hamer/_DATA
+
+# Add RGBD whole-hand translation (depth via OpenNI2, colour via camera 1)
+shadowlink run --source rgbd --camera 1 --backend hamer \
+  --depth-sdk D:/sdk/OpenNI2/Redist --data-dir D:/models/hamer/_DATA
 ```
 
 ### Controls
@@ -164,13 +190,18 @@ shadowlink run --backend hamer --phone phyphox --phone-host 192.0.2.10 \
 | `q` / `Esc` | quit |
 | `c` | capture a neutral pose (hold an open hand still) |
 | `g` | toggle phone macro follow (only shown when a phone source is enabled) |
-| `0` | re-zero the phone mapping at the current attitude (starts following if frozen) |
-| `r` | reset physics, targets, and macro orientation to the start pose |
+| `0` | re-anchor the phone world frame at the current attitude (starts following if frozen) |
+| `p` | toggle RGBD position follow; re-enabling re-zeroes at the current palm |
+| `r` | reset physics, targets, macro orientation, translation, and the grasp ball to the start pose |
 
 ### Common options
 
 ```text
---source camera|video        --camera INDEX_OR_PATH
+--source camera|video|rgbd   --camera INDEX_OR_PATH
+--depth-sdk PATH             --no-position
+--position-preset front|palm|back
+--position-gain FLOAT        --position-deadzone M
+--position-max-offset M
 --backend hamer|mediapipe    --side any|left|right   (anatomical side)
 --pick largest|center|track  --skip N
 --no-mirror                  --draw skeleton|mesh|none
@@ -213,7 +244,11 @@ phone attitude ─► phyphox HTTP polling ─► latest sample
                      ▼
    `g` toggle → relative rotation → deadzone/gain/clamp → smoothing
                      ▼
-   MuJoCo mocap base orientation (whole-hand yaw/pitch/roll)
+rgbd depth ─► OpenNI2 thread ─► depth by frame_seq ─► palm back-projection
+                     │                                         │
+                     │                    `p` toggle → relative translation
+                     ▼                                         ▼
+   MuJoCo mocap base orientation + world translation (whole hand)
                      ▼
    MuJoCo fixed-step physics + 120 touch sensors + viewer/preview
 ```
@@ -266,10 +301,10 @@ shadowlink run --backend hamer --phone phyphox \
   --data-dir D:/models/hamer/_DATA
 ```
 
-Press `g` to start or stop following. Turning it on re-zeros the relative
-mapping, so the hand never snaps back to an old orientation when you resume.
-Press `0` at any time to make the current phone attitude the new zero: the hand
-keeps its current orientation and continues (or starts) following from there.
+Press `g` to start or stop following. Turning it on takes the phone's current
+attitude as the world frame and aligns the hand to it. Press `0` at any time to
+re-anchor the world frame at the phone's current attitude; the hand is aligned
+to the phone again and subsequent motion is relative to that new zero.
 For headless runs, `--phone-follow` starts following at the first ready sample.
 A stale sample (default 0.35 s) freezes the hand and turns follow off while the
 camera path continues; press `0` after recovery to re-zero and resume.
@@ -279,14 +314,15 @@ state, sample rate, quaternion, Euler angles, and relative axis-angle.
 `--list` prints the experiment's buffer names and the source that was selected.
 `phone.mount_preset` selects the physical mounting. The default `back` matches
 the wrist strap: phone top toward the fingers, charging port toward the elbow,
-and the back of the phone against the back of the hand. Use
-`--phone-mount in_hand` when the phone is held flat in the palm with the screen
-facing away from the palm; the two differ by a 180° rotation about the phone's
-long axis. `phone.gain` scales the motion and `phone.max_angle_deg` is an
-optional limit (default `180`, meaning no clamp). `phone.pivot` selects the
-rotation centre: `wrist` (default), `forearm`, or `palm`. The passive viewer
-draws an RGB triad at the zero hand orientation, and the HUD prints that zero
-as `p/r/y` Euler angles.
+and the back of the phone against the back of the hand, so the screen normal
+coincides with the dorsum, the phone top with the extended middle finger, and
+the phone's left side with the hand's left. Use `--phone-mount in_hand` when
+the phone is held flat in the palm with the screen facing away from the palm;
+the two differ by a 180° rotation about the phone's long axis. `phone.gain`
+scales the motion and `phone.max_angle_deg` is an optional limit (default
+`180`, meaning no clamp). `phone.pivot` selects the rotation centre: `wrist`
+(default), `forearm`, or `palm`. The passive viewer draws an RGB triad at the
+zero hand orientation, and the HUD prints that zero as `p/r/y` Euler angles.
 
 > **Security:** phyphox Remote Access is unauthenticated plain HTTP. Use it only
 > on a trusted LAN, never forward the port to the internet, and stop Remote
@@ -294,6 +330,52 @@ as `p/r/y` Euler angles.
 > listens for phone connections and never persists the phone address.
 
 See [docs/PHONE.md](docs/PHONE.md) for setup, axis tuning, and limitations.
+
+## RGBD whole-hand translation
+
+With `--source rgbd`, the colour camera still drives finger retargeting and the
+depth camera adds the palm's physical position:
+
+```bash
+shadowlink run --source rgbd --camera 1 --backend hamer \
+  --depth-sdk D:/sdk/OpenNI2/Redist --data-dir D:/models/hamer/_DATA
+```
+
+- The first usable palm sample (or pressing `p`) defines the zero; later motion
+  is applied 1:1 in metres. Press `p` again to freeze, then press it once more
+  to re-zero at the new position.
+- The default mapping is **anatomy-relative** (`position.hand_relative: true`):
+  3D landmarks decompose your motion into the observed hand's palmar normal,
+  thumb side, and finger direction. Moving toward your thumb moves the
+  simulated hand toward its thumb; moving toward your middle finger moves it
+  toward its middle finger, regardless of the hand's pose, side, or image
+  mirroring.
+- If the 3D keypoints are unusable, or with `--set position.hand_relative=false`,
+  the static `position.preset` is used: `palm` (default) maps motion toward the
+  camera to world `+z`, `front` is screen-aligned, and `back` is for a hand
+  shown dorsal-side to the camera.
+- Translation is applied to the same mocap base as phone orientation, in world
+  space, so the two controls are independent. `r` resets both.
+- The depth frame is matched to the colour frame by sequence number, not by
+  "latest now", so asynchronous HaMeR inference does not mix landmarks with the
+  wrong depth image.
+- Position sampling uses the detector-stage 2D landmarks as soon as they are
+  available, so the translation keeps updating at detector rate instead of
+  waiting for HaMeR inference (~60 ms).
+- Losing the hand or the depth stream freezes the translation instead of
+  snapping back to zero.
+- Keep the hand between 0.6 m and 1.2 m from the sensor with the palm visible
+  to the camera. `--no-position` keeps the camera open but disables
+  translation.
+
+Verify the hardware first:
+
+```bash
+shadowlink rgbd-check --camera 1 --depth-sdk D:/sdk/OpenNI2/Redist --out check.png
+```
+
+See [docs/RGBD.md](docs/RGBD.md) for the SDK setup, presets, alignment offsets,
+and tuning.
 
 ## Performance
 
@@ -349,6 +431,10 @@ pytest -m mediapipe -q
 
 # Real phone running phyphox
 SHADOWLINK_TEST_PHONE=1 SHADOWLINK_TEST_PHONE_HOST=192.0.2.10 pytest -m phone -q
+
+# Real Astra/OpenNI2 depth camera
+SHADOWLINK_TEST_RGBD=1 SHADOWLINK_TEST_DEPTH_SDK=D:/sdk/OpenNI2/Redist \
+pytest -m rgbd -q
 ```
 
 `tests/test_no_path_hacks.py` enforces that the installed package never changes
@@ -367,11 +453,13 @@ src/shadowlink/
 ├── math3d.py             NumPy-only quaternion helpers
 ├── phone/                phyphox HTTP client, attitude fallback, service
 ├── perception/           MediaPipe detector, HaMeR backend, worker, selector
+├── position/             palm depth sampling, frame association, translation
 ├── retarget/             geometry, mapping, smoothing, macro pose, calibration
+├── rgbd/                 OpenNI2 depth service, intrinsics, RGBD frame source
 ├── sim/                  MJCF loading, Shadow Hand, fixed-step clock, viewer
 ├── ui/                   overlay, telemetry, OpenCV window/recorder
 ├── tools/                setup-models, doctor, tactile generator,
-│                         phone-test, render-pose
+│                         phone-test, render-pose, rgbd-check
 └── assets/shadow_hand/   MJCF, OBJ meshes, tactile XML, original licences
 ```
 

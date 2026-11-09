@@ -127,6 +127,73 @@ def test_invalid_macro_pivot_is_rejected(model):
         ShadowHand(model, mujoco.MjData(model), macro_pivot="elbow")
 
 
+def test_macro_translation_moves_the_whole_hand(hand):
+    import mujoco
+
+    mujoco.mj_forward(hand.model, hand.data)
+    pivot = hand.macro_pivot_world.copy()
+    translation = np.array([0.05, -0.02, 0.03])
+
+    assert hand.set_macro_pose(None, translation)
+    mujoco.mj_forward(hand.model, hand.data)
+
+    np.testing.assert_allclose(_pivot_point(hand, "wrist"), pivot + translation, atol=1e-9)
+    np.testing.assert_allclose(hand.macro_translation, translation)
+    np.testing.assert_allclose(hand.macro_origin_world, pivot + translation)
+
+
+def test_rotation_and_translation_share_one_pivot(hand):
+    import mujoco
+
+    mujoco.mj_forward(hand.model, hand.data)
+    pivot = hand.macro_pivot_world.copy()
+    translation = np.array([0.04, 0.0, -0.02])
+    quat = q_from_axis_angle([0.0, 0.0, 1.0], np.pi / 2)
+
+    assert hand.set_macro_pose(quat, translation)
+    mujoco.mj_forward(hand.model, hand.data)
+
+    np.testing.assert_allclose(_pivot_point(hand, "wrist"), pivot + translation, atol=1e-9)
+    np.testing.assert_allclose(hand.macro_pose, quat, atol=1e-12)
+
+
+def test_a_quaternion_only_call_preserves_the_translation(hand):
+    import mujoco
+
+    mujoco.mj_forward(hand.model, hand.data)
+    pivot = hand.macro_pivot_world.copy()
+    translation = np.array([0.03, 0.01, 0.02])
+    assert hand.set_macro_pose(None, translation)
+
+    assert hand.set_macro_pose(q_from_axis_angle([1.0, 0.0, 0.0], 0.3))
+    mujoco.mj_forward(hand.model, hand.data)
+
+    np.testing.assert_allclose(hand.macro_translation, translation)
+    np.testing.assert_allclose(_pivot_point(hand, "wrist"), pivot + translation, atol=1e-9)
+
+
+def test_reset_clears_the_translation(hand):
+    import mujoco
+
+    mujoco.mj_forward(hand.model, hand.data)
+    pivot = hand.macro_pivot_world.copy()
+    hand.set_macro_pose(None, [0.05, 0.0, 0.0])
+
+    hand.reset_macro_pose()
+    mujoco.mj_forward(hand.model, hand.data)
+
+    np.testing.assert_allclose(hand.macro_translation, 0.0, atol=1e-12)
+    np.testing.assert_allclose(hand.macro_origin_world, pivot, atol=1e-12)
+    np.testing.assert_allclose(_pivot_point(hand, "wrist"), pivot, atol=1e-12)
+
+
+def test_invalid_macro_translations_are_rejected(hand):
+    with pytest.raises(ValueError):
+        hand.set_macro_pose(None, [np.nan, 0.0, 0.0])
+    with pytest.raises(ValueError):
+        hand.set_macro_pose(None, np.zeros(2))
+
+
 def test_macro_pose_reset_and_validation(hand):
     import mujoco
 
@@ -141,3 +208,20 @@ def test_macro_pose_reset_and_validation(hand):
     mujoco.mj_forward(hand.model, hand.data)
     np.testing.assert_allclose(hand.macro_pose, initial, atol=1e-12)
     np.testing.assert_allclose(hand.macro_pivot_world, pivot, atol=1e-12)
+
+
+def test_reset_free_bodies_restores_the_grasp_ball(hand):
+    import mujoco
+
+    ball = mujoco.mj_name2id(hand.model, mujoco.mjtObj.mjOBJ_BODY, "ball")
+    joint = int(hand.model.body_jntadr[ball])
+    qpos_adr = int(hand.model.jnt_qposadr[joint])
+    dof_adr = int(hand.model.jnt_dofadr[joint])
+    start = hand.model.qpos0[qpos_adr : qpos_adr + 7].copy()
+
+    hand.data.qpos[qpos_adr : qpos_adr + 3] = (0.9, 0.5, -0.2)
+    hand.data.qvel[dof_adr : dof_adr + 6] = 1.0
+    hand.reset_free_bodies()
+
+    np.testing.assert_allclose(hand.data.qpos[qpos_adr : qpos_adr + 7], start)
+    np.testing.assert_allclose(hand.data.qvel[dof_adr : dof_adr + 6], 0.0)

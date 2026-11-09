@@ -110,6 +110,24 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     return calibrate_from_args(args, _load_config(args))
 
 
+def cmd_rgbd_check(args: argparse.Namespace) -> int:
+    from dataclasses import replace
+
+    from shadowlink.tools.rgbd_check import run_rgbd_check
+
+    cfg = _load_config(args)
+    changes = {"source": "rgbd"}
+    if args.camera is not None:
+        changes["camera"] = args.camera
+    if args.depth_sdk is not None:
+        changes["depth_sdk"] = args.depth_sdk
+    return run_rgbd_check(
+        replace(cfg.capture, **changes),
+        seconds=args.seconds,
+        out=args.out,
+    )
+
+
 def cmd_phone_test(args: argparse.Namespace) -> int:
     from dataclasses import replace
 
@@ -191,8 +209,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="camera/video hand teleoperation")
     _common(run)
-    run.add_argument("--source", choices=["camera", "video"], default=None)
+    run.add_argument("--source", choices=["camera", "video", "rgbd"], default=None)
     run.add_argument("--camera", default=None, help="camera index, file, or stream URL")
+    run.add_argument(
+        "--depth-sdk",
+        default=None,
+        help="directory containing OpenNI2.dll (also OPENNI2_REDIST)",
+    )
+    run.add_argument(
+        "--no-position",
+        dest="position",
+        action="store_false",
+        default=None,
+        help="disable whole-hand translation from the RGBD depth camera",
+    )
+    run.add_argument("--position-preset", choices=["front", "palm", "back"], default=None)
+    run.add_argument("--position-gain", type=float, default=None)
+    run.add_argument("--position-deadzone", type=float, default=None, metavar="M")
+    run.add_argument("--position-max-offset", type=float, default=None, metavar="M")
     run.add_argument("--backend", choices=["hamer", "mediapipe"], default=None)
     run.add_argument("--side", choices=["any", "left", "right"], default=None)
     run.add_argument("--pick", choices=["largest", "center", "track"], default=None)
@@ -237,7 +271,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     cal = sub.add_parser("calibrate", help="capture and save a neutral pose")
     _common(cal)
+    cal.add_argument("--source", choices=["camera", "video", "rgbd"], default=None)
     cal.add_argument("--camera", default=None)
+    cal.add_argument("--depth-sdk", default=None)
     cal.add_argument("--backend", choices=["hamer", "mediapipe"], default=None)
     cal.add_argument("--side", choices=["any", "left", "right"], default=None)
     cal.add_argument("--pick", choices=["largest", "center", "track"], default=None)
@@ -251,6 +287,17 @@ def build_parser() -> argparse.ArgumentParser:
     cal.add_argument("--calibration", default=None)
     cal.add_argument("--debug", action="store_true", default=None)
     cal.set_defaults(func=cmd_calibrate)
+
+    rgbd = sub.add_parser(
+        "rgbd-check",
+        help="verify the depth sensor and colour stream",
+    )
+    _common(rgbd)
+    rgbd.add_argument("--camera", default=None, help="colour camera index")
+    rgbd.add_argument("--depth-sdk", default=None)
+    rgbd.add_argument("--seconds", type=float, default=2.0)
+    rgbd.add_argument("--out", default=None, help="write a colour/depth PNG here")
+    rgbd.set_defaults(func=cmd_rgbd_check)
 
     phone_test = sub.add_parser(
         "phone-test",

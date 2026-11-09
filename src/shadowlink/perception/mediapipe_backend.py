@@ -37,6 +37,7 @@ class MediaPipeKeypointBackend:
                     backend=self.name,
                     bbox_xyxy=detection.bbox_xyxy,
                     keypoints_2d=detection.landmarks_2d,
+                    detector_landmarks_2d=detection.landmarks_2d,
                 )
             )
         return observations

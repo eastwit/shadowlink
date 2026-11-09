@@ -141,7 +141,8 @@ Verifies:
   versions;
 - CUDA availability and device name;
 - checkpoint/config/MANO/landmarker presence and sizes;
-- MJCF compilation (`nq=nv=24`, `nu=20`, `nsensor=120`, `timestep=0.002`);
+- MJCF compilation (24 hand DOFs plus the ball's free joint, `nu=20`,
+  `nsensor=120`, `timestep=0.002`);
 - the 13 keyframes and the 120 tactile sites.
 
 `--json` emits machine-readable output for issue reports.

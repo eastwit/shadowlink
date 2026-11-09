@@ -61,10 +61,17 @@ def zero_axis_segments(quat_wxyz, origin) -> list[AxisSegment]:
 
 
 class Viewer:
-    def __init__(self, model: mujoco.MjModel, data: mujoco.MjData, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        enabled: bool = True,
+        distance: float | None = None,
+    ) -> None:
         self.model = model
         self.data = data
         self.enabled = enabled
+        self.distance = None if distance is None else float(distance)
         self.error: str | None = None
         self._viewer = None
         self._zero_quat: np.ndarray | None = None
@@ -82,7 +89,9 @@ class Viewer:
                 self._viewer.opt.sitegroup[4] = 1
                 camera = self._viewer.cam
                 camera.lookat[:] = DEFAULT_CAMERA["lookat"]
-                camera.distance = DEFAULT_CAMERA["distance"]
+                camera.distance = (
+                    DEFAULT_CAMERA["distance"] if self.distance is None else self.distance
+                )
                 camera.azimuth = DEFAULT_CAMERA["azimuth"]
                 camera.elevation = DEFAULT_CAMERA["elevation"]
         except Exception as exc:  # pragma: no cover - depends on GL/window system

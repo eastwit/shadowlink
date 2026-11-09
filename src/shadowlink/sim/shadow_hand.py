@@ -106,6 +106,7 @@ class ShadowHand:
             q_conj(self._initial_quat),
             self._pivot_world - self._initial_pos,
         )
+        self._macro_translation = np.zeros(3, dtype=np.float64)
         self.data.mocap_pos[mocap_id] = self._initial_pos
         self.data.mocap_quat[mocap_id] = self._initial_quat
 
@@ -122,27 +123,45 @@ class ShadowHand:
         # body origin), which behaves like an elbow-side rotation centre.
         return self._initial_pos.copy()
 
-    def set_macro_pose(self, quat_wxyz: np.ndarray | None) -> bool:
-        """Rotate the whole hand about the configured pivot.
+    def set_macro_pose(
+        self,
+        quat_wxyz: np.ndarray | None,
+        translation: np.ndarray | None = None,
+    ) -> bool:
+        """Rotate and translate the whole hand around the configured pivot.
 
-        Returns ``True`` when the mocap pose actually changed.  The caller is
+        ``quat_wxyz=None`` keeps the current base orientation and
+        ``translation=None`` keeps the current world translation.  Returns
+        ``True`` when the mocap pose actually changed.  The caller is
         responsible for stepping or calling ``mj_forward`` afterwards.
         """
-        if quat_wxyz is None:
+        if quat_wxyz is None and translation is None:
             return False
-        quat = q_norm(quat_wxyz)
+        if quat_wxyz is None:
+            quat = q_norm(self.data.mocap_quat[self._mocap_id])
+        else:
+            quat = q_norm(quat_wxyz)
+        if translation is None:
+            offset = self._macro_translation.copy()
+        else:
+            offset = np.asarray(translation, dtype=np.float64).reshape(3)
+            if not np.isfinite(offset).all():
+                raise ValueError("macro translation must be finite")
         current = self.data.mocap_quat[self._mocap_id]
-        position = self._pivot_world - q_rotate(quat, self._pivot_local)
+        position = self._pivot_world + offset - q_rotate(quat, self._pivot_local)
         if (
             q_angle_between(current, quat) < 1e-9
             and float(np.max(np.abs(position - self.data.mocap_pos[self._mocap_id]))) < 1e-12
+            and float(np.max(np.abs(offset - self._macro_translation))) < 1e-12
         ):
             return False
+        self._macro_translation = offset.copy()
         self.data.mocap_quat[self._mocap_id] = quat
         self.data.mocap_pos[self._mocap_id] = position
         return True
 
     def reset_macro_pose(self) -> None:
+        self._macro_translation = np.zeros(3, dtype=np.float64)
         self.data.mocap_pos[self._mocap_id] = self._initial_pos
         self.data.mocap_quat[self._mocap_id] = self._initial_quat
 
@@ -157,6 +176,15 @@ class ShadowHand:
     @property
     def macro_pivot_world(self) -> np.ndarray:
         return self._pivot_world.copy()
+
+    @property
+    def macro_translation(self) -> np.ndarray:
+        return self._macro_translation.copy()
+
+    @property
+    def macro_origin_world(self) -> np.ndarray:
+        """The translated pivot used by the viewer zero triad."""
+        return self._pivot_world + self._macro_translation
 
     # --------------------------------------------------------------- control
     def set_targets(self, targets: np.ndarray | Mapping[str, float]) -> None:
@@ -176,6 +204,21 @@ class ShadowHand:
             self.data.ctrl[:] = 0.0
         else:
             self.set_targets(ctrl)
+
+    def reset_free_bodies(self) -> None:
+        """Restore every free-jointed world object (e.g. the grasp ball).
+
+        Hand joints are left untouched; the caller decides when to reapply the
+        start pose.  The ball is meant to be knocked around, so ``r`` must put
+        it back on its stand as well.
+        """
+        for joint in range(self.model.njnt):
+            if int(self.model.jnt_type[joint]) != int(mujoco.mjtJoint.mjJNT_FREE):
+                continue
+            qpos_adr = int(self.model.jnt_qposadr[joint])
+            dof_adr = int(self.model.jnt_dofadr[joint])
+            self.data.qpos[qpos_adr : qpos_adr + 7] = self.model.qpos0[qpos_adr : qpos_adr + 7]
+            self.data.qvel[dof_adr : dof_adr + 6] = 0.0
 
     @property
     def qpos(self) -> np.ndarray:

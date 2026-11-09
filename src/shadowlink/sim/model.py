@@ -211,18 +211,51 @@ def ctrl_from_qpos(
     return np.clip(ctrl, model.actuator_ctrlrange[:, 0], model.actuator_ctrlrange[:, 1])
 
 
+def _hand_qpos_size(model: mujoco.MjModel) -> int:
+    """Number of qpos entries owned by the hand joints (named ``rh_*``)."""
+    sizes = {
+        int(mujoco.mjtJoint.mjJNT_FREE): 7,
+        int(mujoco.mjtJoint.mjJNT_BALL): 4,
+        int(mujoco.mjtJoint.mjJNT_SLIDE): 1,
+        int(mujoco.mjtJoint.mjJNT_HINGE): 1,
+    }
+    total = 0
+    for joint in range(model.njnt):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint) or ""
+        if name.startswith("rh_"):
+            total += sizes[int(model.jnt_type[joint])]
+    return total
+
+
 def load_keyframes(
     model: mujoco.MjModel,
     path: str | Path = KEYFRAMES_XML,
 ) -> dict[str, np.ndarray]:
+    """Load hand keyframes, ignoring any extra scene objects.
+
+    The shipped keyframe file stores only the hand qpos (24 entries) because it
+    predates the grasp ball.  The scene adds a free body afterwards, so a
+    hand-only vector is padded with ``qpos0`` for the remaining DOFs; the ball's
+    pose does not affect any actuator length.
+    """
     tree = ET.parse(Path(path))
     poses: dict[str, np.ndarray] = {}
+    hand_qpos = _hand_qpos_size(model)
     for key in tree.getroot().findall("keyframe/key"):
         name = key.get("name")
         raw = key.get("qpos")
         if not name or not raw:
             raise ModelError(f"malformed keyframe: {ET.tostring(key, encoding='unicode')}")
         qpos = np.array([float(token) for token in raw.split()], dtype=np.float64)
+        if qpos.shape[0] not in (hand_qpos, model.nq):
+            raise ModelError(
+                f"keyframe {name!r} has {qpos.shape[0]} qpos values; "
+                f"expected {hand_qpos} (hand only) or {model.nq} (full scene)"
+            )
+        if qpos.shape[0] != model.nq:
+            padded = np.array(model.qpos0, dtype=np.float64)
+            padded[: qpos.shape[0]] = qpos
+            qpos = padded
         poses[name] = ctrl_from_qpos(model, qpos)
     if not poses:
         raise ModelError(f"no keyframes found in {path}")

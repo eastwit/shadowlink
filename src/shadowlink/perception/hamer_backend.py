@@ -169,6 +169,7 @@ class HaMeRBackend:
                     backend=self.name,
                     bbox_xyxy=detection.bbox_xyxy,
                     keypoints_2d=points_2d,
+                    detector_landmarks_2d=detection.landmarks_2d,
                     vertices=np.ascontiguousarray(vertices[index], dtype=np.float32),
                     mesh_edges=self._mesh_edges,
                     camera_translation=np.ascontiguousarray(cam_t[index]),

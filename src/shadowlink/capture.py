@@ -211,7 +211,9 @@ class SyntheticFrameSource:
         self.close()
 
 
-def open_source(
-    cfg: CaptureConfig, clock: Callable[[], float] = time.monotonic
-) -> OpenCVFrameSource:
+def open_source(cfg: CaptureConfig, clock: Callable[[], float] = time.monotonic):
+    if cfg.source == "rgbd":
+        from shadowlink.rgbd.source import RGBDFrameSource
+
+        return RGBDFrameSource(cfg, clock=clock)
     return OpenCVFrameSource(cfg, clock=clock)

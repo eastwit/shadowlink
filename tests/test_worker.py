@@ -230,6 +230,45 @@ def test_close_is_idempotent_and_marks_stopped():
     assert perception.submit(frame(0)) is False
 
 
+def test_latest_detection_is_available_before_inference_finishes():
+    backend = FakeBackend(delay=0.5)
+    perception = service(
+        detector=FakeDetector(lambda seq: [detection(seq)]),
+        backend=backend,
+    )
+    perception.start()
+    try:
+        perception.submit(frame(0))
+        assert wait_for(lambda: perception.latest_detection() is not None)
+        pending = perception.latest_detection()
+        assert pending is not None
+        packet, found = pending
+        assert packet.seq == 0
+        assert found.frame_seq == 0
+        assert backend.calls >= 1
+        # The result is only published after the backend returns.
+        assert perception.latest_result() is None
+        assert wait_for(lambda: perception.latest_result() is not None)
+    finally:
+        perception.close()
+
+
+def test_latest_detection_clears_when_no_hand_is_found():
+    detector = FakeDetector(lambda seq: [detection(seq)] if seq == 0 else [])
+    perception = service(detector=detector)
+    perception.start()
+    try:
+        perception.submit(frame(0))
+        assert wait_for(lambda: perception.latest_detection() is not None)
+        perception.submit(frame(1))
+        assert wait_for(
+            lambda: (result := perception.latest_result()) is not None and result.frame_seq == 1
+        )
+        assert perception.latest_detection() is None
+    finally:
+        perception.close()
+
+
 def test_single_pipeline_runs_both_stages_in_one_thread():
     backend = FakeBackend()
     perception = service(

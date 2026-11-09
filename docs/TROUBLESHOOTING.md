@@ -190,7 +190,8 @@ Measurement was paused on the phone. Press play in phyphox, or set
 No fresh sample arrived within `phone.stale_timeout_s` (default 0.35 s), so the
 app froze the macro pose by design. Check Wi-Fi, lower `phone.poll_hz` if the
 phone cannot keep up, or raise `phone.timeout_s`. Press `0` after the HUD reports
-`running`; it re-zeros at the current attitude and resumes following.
+`running`; it re-anchors the world frame at the current attitude and resumes
+following.
 
 ### The hand does not follow
 
@@ -236,18 +237,107 @@ also affect small or fast motions.
 
 ### I cannot tell what the zero orientation is
 
-The viewer draws a small RGB triad at the pivot using the hand orientation
-captured at zero: red = hand `+x` (palmar at rest), green = `+y`, blue = `+z`
-(distal). The HUD line `zero p/r/y` reports the same orientation as Euler
-angles. Press `0` to recapture it at the current pose; `r` returns to the start
-pose.
+The viewer draws a small RGB triad at the pivot in the hand base frame aligned
+with the phone at zero: red = hand `+x`, green = `+y`, blue = `+z`. The HUD line
+`zero p/r/y` reports that orientation as Euler angles. Press `0` to take the
+phone's current attitude as the new world frame; the hand re-aligns to it and
+`r` returns to the start pose.
 
 ### Yaw drifts or attitude is noisy
 
 Use an experiment with an **Attitude** output; it is the fused rotation vector
 and is much better than the raw-gyroscope fallback. The fallback drifts without
-a magnetometer and takes about 20 samples to initialise. Following is relative:
-press `0` to re-zero at any time. There is no absolute-heading mode.
+a magnetometer and takes about 20 samples to initialise. The phone attitude at
+the zero instant defines the world frame and later motion is relative to it, so
+yaw drift after the zero still shows up as rotation; press `0` to re-anchor the
+world frame at the current attitude.
+
+## RGBD position problems
+
+See [RGBD.md](RGBD.md) for hardware setup, presets, and alignment tuning.
+
+### `cannot find OpenNI2.dll`
+
+The directory you passed does not contain the SDK runtime. Point `--depth-sdk` at
+the `Redist` (Windows) or `lib` (Linux) directory that contains `OpenNI2.dll` /
+`libOpenNI2.dll`, or set `OPENNI2_REDIST` / `OPENNI2_REDIST64`. The error lists
+every directory that was tried. Common Orbbec install directories are searched
+automatically, but a portable SDK in `Downloads` is not.
+
+### `the openni package is required`
+
+```bash
+pip install "openni>=2.3,<3"
+```
+
+Install it into the environment that runs ShadowLink (`.[rgbd]` pulls it in).
+`shadowlink doctor` does not import it; `rgbd-check` does.
+
+### The colour camera is the wrong one
+
+`--camera` selects the **UVC colour** camera, not the Astra depth sensor. On a
+laptop with an integrated webcam, the external colour camera is often index `1`
+or `2`. Run `shadowlink rgbd-check --camera N --depth-sdk ... --out check.png`
+and inspect the colour half of the saved image before starting a full run.
+
+### The depth stream opens but there is almost no valid depth
+
+- Keep the hand between about 0.6 m and 1.2 m from the sensor; the Astra has a
+  close-range limit and returns zeros closer than that.
+- Remove covers, stickers, or dust from the IR projector and receiver.
+- Black, shiny, or transparent surfaces can return holes. The palm sampler
+  rejects a frame rather than substituting background depth.
+- Wait a few seconds after startup: the first frames are discarded while the
+  stream warms up.
+- `rgbd-check` prints the valid-pixel fraction; below roughly 5% it exits with
+  code 1.
+
+### Translation moves in the wrong direction
+
+With the default `position.hand_relative: true`, the mapping follows the
+observed hand: motion toward your thumb should move the simulated hand toward
+its thumb, and motion toward your middle finger should move it toward the
+middle finger. This needs valid 3D landmarks; if the backend cannot provide
+them, the app falls back to the static preset. To check the fallback
+independently, run with `--set position.hand_relative=false --position-preset
+palm` (motion toward the camera → world `+z`), `front` (screen-aligned), or
+`back`.
+
+If hand-relative motion is inverted (thumb ↔ pinky), the detector's
+apparent/anatomical sides are probably inconsistent with the image mirroring.
+Check that `capture.mirror` matches how the colour camera is mounted (toggle
+with `--no-mirror`), and use `--side left|right` to select the anatomically
+labelled hand to track. Use `--position-gain 1.0` for physical 1:1; a negative
+or very large gain will look wrong in every mode. `rgbd-check --out` shows
+whether colour and depth are actually looking at the same scene.
+
+### The hand jumps when I press `p`
+
+`p` re-zeroes at the current palm. It rebases both the camera reference and the
+world anchor, so the hand should not jump. If it does, the depth frame at that
+moment was probably invalid and the zero was deferred to the next usable sample.
+Check that the HUD shows `tracking`, not `waiting` or `frozen`.
+
+### Position lines are missing from the HUD
+
+Position control is enabled only with `--source rgbd` and `position.enabled`.
+If `--no-position` was passed, or the YAML sets `position.enabled: false`, the
+`pos`/`cam`/`depth` HUD lines are absent and `p` prints a message explaining the
+requirement. The default YAML keeps it enabled.
+
+### `depth error` appears mid-run
+
+The depth thread stopped (for example the USB device was unplugged). Finger
+teleoperation continues; translation freezes at its last value. Restart the app
+after reconnecting the camera. OpenNI2 is process-global, so a second
+`DepthService` cannot recover in the same process.
+
+### The colour and depth images do not line up
+
+There is no hardware sync or factory registration between the two sensors. Use
+`position.align_offset_x` / `align_offset_y` (fractions of the image) to move the
+sampled palm window onto the hand in the depth image. See the alignment section
+of [RGBD.md](RGBD.md).
 
 ## Windows temp-directory permission errors in pytest
 

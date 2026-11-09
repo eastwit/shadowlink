@@ -20,6 +20,7 @@ BackendName = Literal["hamer", "mediapipe"]
 PhoneName = Literal["none", "phyphox"]
 MacroPivot = Literal["palm", "wrist", "forearm"]
 MountPreset = Literal["back", "in_hand", "custom"]
+PositionPreset = Literal["front", "palm", "back"]
 
 
 class ConfigError(ValueError):
@@ -28,7 +29,7 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class CaptureConfig:
-    source: Literal["camera", "video"] = "camera"
+    source: Literal["camera", "video", "rgbd"] = "camera"
     camera: str = "0"
     video: str | None = None
     width: int = 0
@@ -37,6 +38,14 @@ class CaptureConfig:
     api: Literal["any", "dshow", "msmf"] = "any"
     buffer_size: int = 1
     fps: float = 0.0
+    depth_sdk: str | None = None
+    depth_width: int = 640
+    depth_height: int = 480
+    depth_fps: int = 30
+    depth_fx: float | None = None
+    depth_fy: float | None = None
+    depth_cx: float | None = None
+    depth_cy: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +138,35 @@ class PhoneConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PositionConfig:
+    enabled: bool = True
+    preset: PositionPreset = "palm"
+    hand_relative: bool = True
+    invert_x: bool = False
+    invert_y: bool = False
+    invert_z: bool = False
+    gain: float = 1.0
+    deadzone_m: float = 0.01
+    max_offset_m: float = 0.25
+    min_depth_mm: float = 150.0
+    max_depth_mm: float = 1500.0
+    sample_radius_px: int = 5
+    min_valid_pixels: int = 8
+    min_landmarks: int = 3
+    max_spread_m: float = 0.12
+    temporal_window: int = 3
+    max_depth_skew_s: float = 0.15
+    stale_timeout_s: float = 0.5
+    auto_zero: bool = True
+    align_offset_x: float = 0.0
+    align_offset_y: float = 0.0
+    min_cutoff: float = 1.0
+    beta: float = 0.1
+    d_cutoff: float = 1.0
+    max_rate_m_s: float = 0.8
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeConfig:
     max_frames: int = 0
     debug: bool = False
@@ -144,6 +182,7 @@ class AppConfig:
     ui: UIConfig = UIConfig()
     data: DataConfig = DataConfig()
     phone: PhoneConfig = PhoneConfig()
+    position: PositionConfig = PositionConfig()
     runtime: RuntimeConfig = RuntimeConfig()
 
     # ------------------------------------------------------------------ load
@@ -212,6 +251,22 @@ class AppConfig:
             raise ConfigError("capture.buffer_size must be >= 1")
         if c.fps < 0:
             raise ConfigError("capture.fps must be >= 0")
+        if c.depth_width <= 0 or c.depth_height <= 0:
+            raise ConfigError("capture.depth_width/height must be > 0")
+        if c.depth_fps <= 0:
+            raise ConfigError("capture.depth_fps must be > 0")
+        for name in ("depth_fx", "depth_fy", "depth_cx", "depth_cy"):
+            value = getattr(c, name)
+            if value is not None and not math.isfinite(value):
+                raise ConfigError(f"capture.{name} must be finite")
+        if c.depth_fx is not None and c.depth_fx <= 0:
+            raise ConfigError("capture.depth_fx must be > 0")
+        if c.depth_fy is not None and c.depth_fy <= 0:
+            raise ConfigError("capture.depth_fy must be > 0")
+        if c.depth_cx is not None and not 0 <= c.depth_cx < c.depth_width:
+            raise ConfigError("capture.depth_cx must be inside the depth image")
+        if c.depth_cy is not None and not 0 <= c.depth_cy < c.depth_height:
+            raise ConfigError("capture.depth_cy must be inside the depth image")
         if p.skip < 1:
             raise ConfigError("perception.skip must be >= 1")
         if p.max_age_s <= 0:
@@ -282,6 +337,41 @@ class AppConfig:
             raise ConfigError("phone.mount_* must be finite")
         if math.sqrt(sum(value * value for value in mount)) < 1e-9:
             raise ConfigError("phone mount quaternion must be non-zero")
+        pos = self.position
+        if pos.preset not in ("front", "palm", "back"):
+            raise ConfigError("position.preset must be one of front, palm, back")
+        if not math.isfinite(pos.gain) or pos.gain <= 0:
+            raise ConfigError("position.gain must be finite and > 0")
+        if not math.isfinite(pos.max_offset_m) or pos.max_offset_m <= 0:
+            raise ConfigError("position.max_offset_m must be finite and > 0")
+        if not math.isfinite(pos.deadzone_m) or not 0 <= pos.deadzone_m < pos.max_offset_m:
+            raise ConfigError("position.deadzone_m must be in [0, max_offset_m)")
+        if not 0 < pos.min_depth_mm < pos.max_depth_mm:
+            raise ConfigError("position depth range must satisfy 0 < min < max")
+        if pos.sample_radius_px < 1:
+            raise ConfigError("position.sample_radius_px must be >= 1")
+        if pos.min_valid_pixels < 1:
+            raise ConfigError("position.min_valid_pixels must be >= 1")
+        if not 1 <= pos.min_landmarks <= 5:
+            raise ConfigError("position.min_landmarks must be in [1, 5]")
+        if not math.isfinite(pos.max_spread_m) or pos.max_spread_m <= 0:
+            raise ConfigError("position.max_spread_m must be finite and > 0")
+        if pos.temporal_window < 1:
+            raise ConfigError("position.temporal_window must be >= 1")
+        if not math.isfinite(pos.max_depth_skew_s) or pos.max_depth_skew_s <= 0:
+            raise ConfigError("position.max_depth_skew_s must be finite and > 0")
+        if not math.isfinite(pos.stale_timeout_s) or pos.stale_timeout_s <= 0:
+            raise ConfigError("position.stale_timeout_s must be finite and > 0")
+        for name in ("align_offset_x", "align_offset_y"):
+            value = getattr(pos, name)
+            if not math.isfinite(value) or not -0.5 <= value <= 0.5:
+                raise ConfigError(f"position.{name} must be finite and in [-0.5, 0.5]")
+        if pos.min_cutoff <= 0 or pos.d_cutoff <= 0:
+            raise ConfigError("position cutoffs must be > 0")
+        if pos.beta < 0:
+            raise ConfigError("position.beta must be >= 0")
+        if not math.isfinite(pos.max_rate_m_s) or pos.max_rate_m_s <= 0:
+            raise ConfigError("position.max_rate_m_s must be finite and > 0")
         if self.runtime.max_frames < 0:
             raise ConfigError("runtime.max_frames must be >= 0")
 
@@ -404,5 +494,9 @@ def _resolve_relative_paths(cfg: AppConfig, base: Path) -> AppConfig:
         hand_model=absolute(cfg.data.hand_model),
         calibration=absolute(cfg.data.calibration),
     )
-    capture = replace(cfg.capture, video=absolute(cfg.capture.video))
+    capture = replace(
+        cfg.capture,
+        video=absolute(cfg.capture.video),
+        depth_sdk=absolute(cfg.capture.depth_sdk),
+    )
     return replace(cfg, data=data, capture=capture)

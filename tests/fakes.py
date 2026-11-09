@@ -10,6 +10,7 @@ import numpy as np
 
 from shadowlink.perception.base import WorkerHealth
 from shadowlink.types import (
+    DepthIntrinsics,
     FramePacket,
     HandDetection,
     HandObservation,
@@ -43,24 +44,57 @@ class FakeSource:
         height: int = 48,
         fps: float = 30.0,
         clock: Callable[[], float] = time.monotonic,
+        mirrored: bool = False,
+        depth_mm: int | None = None,
+        depth_size: tuple[int, int] | None = None,
+        depth_factory: Callable[[int], np.ndarray] | None = None,
     ) -> None:
         self.total = int(frames)
         self.width_px = int(width)
         self.height_px = int(height)
         self._fps = float(fps)
         self._clock = clock
+        self.mirrored = bool(mirrored)
         self._seq = 0
         self.closed = False
+        self._depth_factory = depth_factory
+        self._depth: np.ndarray | None = None
+        self._depth_intrinsics: DepthIntrinsics | None = None
+        if depth_mm is not None or depth_factory is not None:
+            depth_width, depth_height = depth_size or (self.width_px, self.height_px)
+            self._depth_intrinsics = DepthIntrinsics(
+                fx=0.9 * depth_width,
+                fy=0.9 * depth_height,
+                cx=(depth_width - 1) / 2.0,
+                cy=(depth_height - 1) / 2.0,
+                width=depth_width,
+                height=depth_height,
+            )
+            if depth_factory is None:
+                self._depth = np.full((depth_height, depth_width), int(depth_mm), dtype=np.uint16)
 
     def read(self) -> FramePacket | None:
         if self.closed or self._seq >= self.total:
             return None
         image = np.zeros((self.height_px, self.width_px, 3), dtype=np.uint8)
+        now = self._clock()
+        depth = self._depth
+        if self._depth_factory is not None:
+            depth = np.asarray(self._depth_factory(self._seq), dtype=np.uint16)
+        depth_fields = {}
+        if depth is not None and self._depth_intrinsics is not None:
+            depth_fields = {
+                "depth_mm": depth,
+                "depth_intrinsics": self._depth_intrinsics,
+                "depth_ts": now,
+            }
         packet = FramePacket(
             seq=self._seq,
-            capture_ts=self._clock(),
+            capture_ts=now,
             image_bgr=image,
+            mirrored=self.mirrored,
             source_fps=self._fps,
+            **depth_fields,
         )
         self._seq += 1
         return packet
@@ -89,12 +123,16 @@ class FakePerception:
         observations: Sequence[HandObservation] | None = None,
         *,
         keypoints: np.ndarray | None = None,
+        landmarks_2d: np.ndarray | None = None,
         side: Side = Side.RIGHT,
         backend: str = "fake",
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._observations = tuple(observations or ())
         self._keypoints = None if keypoints is None else np.asarray(keypoints, dtype=np.float64)
+        self._landmarks_2d = (
+            None if landmarks_2d is None else np.asarray(landmarks_2d, dtype=np.float64)
+        )
         self._side = side
         self._backend = backend
         self._clock = clock
@@ -113,12 +151,15 @@ class FakePerception:
             return False
         self.submitted.append(frame.seq)
         now = self._clock()
-        if self._keypoints is None:
+        if self._keypoints is None and self._landmarks_2d is None:
             observations = self._observations
         else:
+            keypoints = (
+                np.zeros((21, 3), dtype=np.float64) if self._keypoints is None else self._keypoints
+            )
             observations = (
                 HandObservation(
-                    keypoints_3d=self._keypoints,
+                    keypoints_3d=keypoints,
                     apparent_side=self._side,
                     anatomical_side=self._side,
                     score=1.0,
@@ -126,6 +167,7 @@ class FakePerception:
                     capture_ts=frame.capture_ts,
                     inference_ts=now,
                     backend=self._backend,
+                    detector_landmarks_2d=self._landmarks_2d,
                 ),
             )
         self._result = PerceptionResult(

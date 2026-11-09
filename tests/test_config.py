@@ -211,3 +211,62 @@ def test_explicit_cli_flags_beat_the_config_file():
     assert updated.sim.viewer is False
     assert updated.ui.show is False
     assert updated.runtime.max_frames == 7
+
+
+def test_rgbd_and_position_defaults():
+    config = AppConfig()
+    assert config.capture.source == "camera"
+    assert config.capture.depth_sdk is None
+    assert config.capture.depth_width == 640
+    assert config.capture.depth_height == 480
+    assert config.capture.depth_fps == 30
+    assert config.capture.depth_fx is None
+    assert config.position.enabled is True
+    assert config.position.preset == "palm"
+    assert config.position.hand_relative is True
+    assert config.position.max_offset_m == pytest.approx(0.25)
+    assert config.position.min_depth_mm < config.position.max_depth_mm
+
+
+@pytest.mark.parametrize(
+    "pair",
+    [
+        "position.gain=0",
+        "position.max_offset_m=0",
+        "position.deadzone_m=0.3",
+        "position.min_landmarks=0",
+        "position.min_landmarks=6",
+        "position.min_valid_pixels=0",
+        "position.sample_radius_px=0",
+        "position.temporal_window=0",
+        "position.max_rate_m_s=0",
+        "position.align_offset_x=0.6",
+        "position.max_depth_mm=100",
+        "position.preset=sideways",
+        "capture.depth_width=0",
+        "capture.depth_fps=0",
+    ],
+)
+def test_invalid_rgbd_and_position_settings_are_rejected(pair):
+    with pytest.raises(ConfigError):
+        AppConfig().apply_overrides([pair])
+
+
+def test_position_cli_flags_reach_the_config():
+    args = argparse.Namespace(
+        source="rgbd",
+        depth_sdk="C:/sdk",
+        position=False,
+        position_preset="palm",
+        position_gain=1.5,
+        position_deadzone=0.02,
+        position_max_offset=0.3,
+    )
+    updated = apply_cli_overrides(AppConfig(), args)
+    assert updated.capture.source == "rgbd"
+    assert updated.capture.depth_sdk == "C:/sdk"
+    assert updated.position.enabled is False
+    assert updated.position.preset == "palm"
+    assert updated.position.gain == pytest.approx(1.5)
+    assert updated.position.deadzone_m == pytest.approx(0.02)
+    assert updated.position.max_offset_m == pytest.approx(0.3)

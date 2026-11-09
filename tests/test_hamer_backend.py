@@ -87,6 +87,8 @@ def test_real_checkpoint_reconstructs_a_hand():
     assert observation.keypoints_2d is not None
     assert observation.keypoints_2d.shape == (21, 2)
     assert np.isfinite(observation.keypoints_2d).all()
+    assert observation.detector_landmarks_2d is not None
+    np.testing.assert_array_equal(observation.detector_landmarks_2d, detections[0].landmarks_2d)
     assert observation.vertices is not None
     assert observation.vertices.shape == (778, 3)
     assert observation.mesh_edges is not None

@@ -104,6 +104,7 @@ class PerceptionService:
         self._clock = clock
         self._input: LatestSlot[FramePacket] = LatestSlot()
         self._detections: LatestSlot[tuple] = LatestSlot()
+        self._detection_view: LatestValue[tuple[FramePacket, HandDetection]] = LatestValue()
         self._result: LatestValue[PerceptionResult] = LatestValue()
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -134,6 +135,7 @@ class PerceptionService:
         self._stop.set()
         self._input.clear()
         self._detections.clear()
+        self._detection_view.clear()
         for thread in self._threads:
             thread.join(timeout=2.0)
         alive = [thread.name for thread in self._threads if thread.is_alive()]
@@ -168,6 +170,14 @@ class PerceptionService:
     def latest_result(self) -> PerceptionResult | None:
         return self._result.get()
 
+    def latest_detection(self) -> tuple[FramePacket, HandDetection] | None:
+        """Return the newest selected detection, before inference finishes.
+
+        The position layer only needs the detector's 2D landmarks, so this lets
+        it sample depth at detector rate instead of HaMeR inference rate.
+        """
+        return self._detection_view.get()
+
     # ------------------------------------------------------------- internals
     def _count_dropped(self) -> None:
         with self._lock:
@@ -189,8 +199,10 @@ class PerceptionService:
                 detect_ms = (detect_end - detect_start) * 1000.0
 
                 if not chosen:
+                    self._detection_view.clear()
                     self._publish(frame, [], detect_ms, 0.0)
                     continue
+                self._detection_view.put((frame, chosen[0]))
                 if self.pipeline == "single":
                     estimate_start = self._clock()
                     observations = self.backend.estimate(frame, chosen)

@@ -11,17 +11,17 @@ that loop testable, configurable, and safe to publish.
 cli.py / __main__.py
         │
         ▼
-app.py (TeleopApp) ─────────────────────────────────┐
-   │            │            │           │          │
-   ▼            ▼            ▼           ▼          ▼
-capture.py   perception/   retarget/   phone/    sim/ + ui/
-             │            │           │          │
-             ▼            ▼           ▼          ▼
-          types.py     geometry.py  client.py   model.py
-                       mapper.py    attitude.py shadow_hand.py
-                       smoothing.py service.py  stepping.py
-                       calibration.py           viewer.py
-                       macro_pose.py
+app.py (TeleopApp) ──────────────────────────────────────────┐
+   │            │            │           │          │        │
+   ▼            ▼            ▼           ▼          ▼        ▼
+capture.py   perception/   retarget/   phone/    position/  sim/ + ui/
+   │            │            │           │          │        │
+   ▼            ▼            ▼           ▼          ▼        ▼
+rgbd/        types.py     geometry.py  client.py  sampling  model.py
+depth.py     │            mapper.py    attitude.py controller shadow_hand.py
+source.py    │            smoothing.py service.py  association
+             │            calibration.py           anatomy.py
+             │            macro_pose.py           types.py
 ```
 
 Dependency rules, enforced by review and tests:
@@ -35,6 +35,12 @@ Dependency rules, enforced by review and tests:
   library, NumPy, and `math3d.py`.
 - `retarget/macro_pose.py` depends only on `math3d.py` and a small sample
   protocol; it never imports `phone/`.
+- `position/` depends on `types.py`, `config.py`, the pure geometry helpers in
+  `retarget/geometry.py`, and the filters in `retarget/smoothing.py`; it never
+  imports `rgbd/`, `sim/`, or `perception/`.
+- `rgbd/` depends on `capture.py` for the colour source and `types.py` for the
+  depth records. `openni` is imported lazily inside `rgbd/depth.py`; the package
+  never imports `sim/` or `position/`.
 - `math3d.py` depends only on NumPy and the standard library.
 - Only `app.py` orchestrates the layers.
 - Only `cli.py` uses `argparse`.
@@ -144,26 +150,35 @@ at `poll_hz`, applies a fixed phone-body twist, publishes an immutable
 session changes, and maintains a `PhoneHealth` record. It only discovers hosts
 when `auto_discover` is explicitly enabled. It never touches MuJoCo.
 
-`retarget/macro_pose.py` converts a sample into a hand-base quaternion:
+`retarget/macro_pose.py` converts a sample into a hand-base quaternion. The
+sample attitude at the zero instant defines the world reference; every later
+sample is applied relative to it. The fixed mount encodes the anatomical
+correspondence between the phone and the hand (screen normal → dorsum, phone
+top → middle finger, phone left → hand left):
 
 ```text
-q_rel    = conj(q_zero) ⊗ q_now             (rotation since the toggle)
+q_rel    = conj(q_zero) ⊗ q_now             (rotation since the zero)
 angle    = 0 if angle < deadzone else min(angle * gain, max_angle)
 q_hand   = q_mount ⊗ q_rel ⊗ conj(q_mount)  (phone body → hand base)
-q_target = q_ref_hand ⊗ q_hand              (hand orientation at toggle)
+q_ref    = q_zero ⊗ conj(q_mount)           (hand pose aligned at zero)
+q_target = q_ref ⊗ q_hand = q_now ⊗ conj(q_mount)
 q_out    = slerp(q_out, q_target, alpha)    (time constant + rate limit)
 ```
 
-`max_angle` defaults to 180°, so the clamp is inactive and the full relative
-rotation passes through. `q_mount` comes from `phone.mount_preset`: `back`
-(default, phone strapped to the back of the hand), `in_hand` (phone held flat in
-the palm with the screen facing away from the palm), or `custom` (the
+The result makes the hand's anatomical frame identical to the phone's
+anatomical frame at all times, and at the zero instant the hand starts in the
+phone's real attitude rather than keeping an arbitrary offset. `max_angle`
+defaults to 180°, so the clamp is inactive and the full relative rotation
+passes through. `q_mount` comes from `phone.mount_preset`: `back` (default,
+phone strapped to the back of the hand), `in_hand` (phone held flat in the
+palm with the screen facing away from the palm), or `custom` (the
 `mount_w/x/y/z` fields). The two presets differ by a 180° rotation about the
 phone's long axis, so only the width and screen-normal axes change sign between
 them.
 
-`q_zero` and `q_ref_hand` are captured together when follow is enabled, so
-freezing and resuming does not snap the hand back. When the sample is missing,
+`q_zero` is captured when follow is enabled; the hand reference is derived
+from it (`q_zero ⊗ conj(q_mount)`), so enabling follow re-aligns the hand to
+the phone instead of preserving its previous pose. When the sample is missing,
 not ready, or stale, `update` returns `None` and the base orientation is frozen.
 
 The app writes the result to `ShadowHand.set_macro_pose`, which sets the
@@ -181,27 +196,138 @@ current scene has no grasped objects; adding one would require a free joint or a
 force-aware attachment.
 
 The `g` toggle and `--phone-follow` only enable or disable this layer. The `0`
-key re-zeros the relative mapping without toggling, using the current phone
-attitude and the current hand orientation. These actions do not modify the
+key re-anchors the world frame at the current phone attitude without toggling,
+so the hand is aligned to the phone again. These actions do not modify the
 finger retargeter or the `TargetController` state machine.
 
-`MacroPoseController.zero_hand` exposes the hand orientation captured with the
-zero (`q_ref_hand`, or the initial orientation before following starts). Each
-frame the app passes it and `ShadowHand.macro_pivot_world` to
-`Viewer.set_macro_zero`. While synced, the viewer writes three `mjv_connector`
+`MacroPoseController.zero_hand` exposes the aligned hand orientation for the
+current zero (`q_zero ⊗ conj(q_mount)`, or the initial orientation before
+following starts). Each
+frame the app passes it and `ShadowHand.macro_origin_world` (the pivot plus the
+RGBD translation) to `Viewer.set_macro_zero`. While synced, the viewer writes three `mjv_connector`
 arrows into `user_scn`: red for hand-base `+x`, green for `+y`, blue for `+z`,
 offset along the palmar axis so the triad is visible outside the mesh. Clearing
 the zero also clears those user geoms. This is display-only and does not touch
 the physics state.
 
+## RGBD position
+
+The RGBD path adds whole-hand translation without changing perception or
+retargeting. It is enabled only when `capture.source == "rgbd"` and
+`position.enabled` is true.
+
+`rgbd/depth.py` owns the OpenNI2 lifecycle. `DepthService.start()` runs on the
+main thread: it resolves a directory containing `OpenNI2.dll`, registers it with
+`os.add_dll_directory`, initialises OpenNI2, opens the first device, creates a
+depth stream, requests the configured mode (falling back to the default mode if
+the device rejects it), and starts one daemon thread named `shadowlink-depth`.
+The thread waits for a frame with `wait_for_any_stream(..., timeout=0.1)` and
+only then calls `read_frame()`, so the stop event is observed within one poll
+interval even on builds that do not wake a blocked read. It discards a few
+warm-up frames, copies the buffer into a read-only `uint16` array, computes the
+intrinsics from the first real frame (device FOV, nominal 570.3 px fallback),
+and publishes a `DepthFrame` into a latest-only slot together with
+`DepthHealth`. `close()` sets the stop event and joins; stopping the stream is
+only a fallback if the thread is still alive, because stopping from another
+thread can race with `read_frame`. If the thread still does not exit, the DLL is
+deliberately not unloaded; otherwise the stream, device, and DLL directory
+handle are released.
+OpenNI2 is process-global, so only one `DepthService` may be active.
+
+`rgbd/source.py` wraps a colour source and the depth service. Each `read()`
+attaches the newest available depth snapshot to the colour `FramePacket`
+(`depth_mm`, `depth_intrinsics`, `depth_ts`). Before the first depth frame it
+returns a colour-only packet. Depth startup failure becomes a `CaptureError`,
+which the CLI reports with exit code 2.
+
+`position/association.py` stores a short bounded history keyed by colour frame
+sequence. The app adds every frame and looks up the record for the sampled
+frame `N`. This pairs the landmarks with the depth image from their own capture
+instead of "the newest depth now". The app also rejects a pair whose
+colour/depth timestamp skew exceeds `position.max_depth_skew_s`.
+
+`PerceptionService.latest_detection()` publishes the detector's selected
+landmarks before HaMeR inference finishes. The app prefers that view for palm
+sampling (falling back to the finished observation when it is stale), so
+translation updates at detector rate rather than inference rate. The
+hand-relative anatomical axes are cached from the latest valid 3D observation
+and re-oriented with the current mocap quaternion on every iteration.
+
+`position/depth_sampling.py` maps the palm landmarks (`0, 5, 9, 13, 17`) from
+the processed colour image back through the mirror, normalises them, and scales
+to the depth resolution. Each landmark takes a `(2r+1)²` window; only pixels in
+the configured depth range count, and the window depth is the median. Points are
+back-projected with
+
+```text
+Z = depth_mm / 1000
+X = (u - cx) * Z / fx
+Y = (v - cy) * Z / fy
+```
+
+The surviving 3D points are component-wise medianed. Fewer than
+`min_landmarks` or a maximum deviation above `max_spread_m` rejects the frame;
+background depth is never substituted for a missing sample.
+
+`position/controller.py` converts camera-space motion into a world translation:
+
+```text
+delta_cam   = median(camera samples) - reference
+delta_cam  *= soft deadzone
+delta_local = A @ delta_cam
+delta_world = gain * sign * (R_hand @ delta_local)
+translation = clip(anchor_world + delta_world, ±max_offset_m)
+              → One-Euro filter → slew limit → clip
+```
+
+The first usable sample (when `auto_zero` is true) or `zero()` sets the
+reference. `zero()` rebases the reference and the anchor so the output does not
+jump; pressing `p` while a fresh sample exists takes effect immediately,
+otherwise it is deferred to the next update. A missing or stale measurement, or
+a rejected depth frame, freezes the output. It never returns to zero on its own.
+
+`position/anatomy.py` builds `A` and `R_hand` from the observation.
+`camera_to_local_axes()` canonicalises `HandObservation.keypoints_3d` into a
+right-hand frame, builds the palm basis `(normal, -side, forward)` (palmar,
+thumb, distal), and mirrors the camera x axis for an anatomical left hand
+because the depth displacement is measured on the raw image. `hand_base_rotation()`
+then maps those local axes into world space using the current mocap
+quaternion. The controller accepts this rotation per sample, so moving toward
+the physical thumb drives the simulated thumb in any hand pose. If the
+keypoints are degenerate, or `position.hand_relative` is false, the controller
+falls back to the static `position.preset`: `palm` maps motion toward the
+camera to world `+z` (the palm normal at rest), `front` is screen-aligned, and
+`back` is for a hand shown dorsal-side to the camera.
+
+`ShadowHand.set_macro_pose(quat, translation)` writes both values in one mocap
+update:
+
+```text
+mocap_pos = pivot_world + translation - R(quat) @ pivot_local
+```
+
+`quat=None` keeps the current base orientation and `translation=None` keeps the
+stored translation. The app therefore calls it once per frame with the phone
+quaternion (or `None` when orientation is not following) and the position
+controller output. Rotation and translation are independent. The viewer zero
+triad is drawn at `macro_origin_world = pivot_world + translation`.
+
 ## Simulation
 
-`sim/model.py` loads the scene with `mujoco.MjModel.from_xml_path`, validates
-`nq=nv=24`, `nu=20`, `nsensor=120`, `timestep=0.002`, and creates an
-`ActuatorLayout` from `actuator_trntype`, `actuator_trnid`, and
-`actuator_ctrlrange`. It also loads the 13 keyframes and converts a keyframe
-`qpos` to actuator targets through `data.actuator_length`, so fixed tendons are
-handled without hard-coded sums.
+`sim/model.py` loads the scene with `mujoco.MjModel.from_xml_path`. The hand
+itself has 24 DOFs (`nq=nv=24`); the scene adds one free joint for the grasp
+ball, so the compiled model has `nq=31`, `nv=30`, `nu=20`, `nsensor=120`, and
+`timestep=0.002`. It creates an `ActuatorLayout` from `actuator_trntype`,
+`actuator_trnid`, and `actuator_ctrlrange`. It also loads the 13 hand keyframes
+and converts a keyframe `qpos` to actuator targets through
+`data.actuator_length`, so fixed tendons are handled without hard-coded sums;
+keyframes store only the hand DOFs and are padded with `qpos0` for the ball.
+
+The scene includes an orange ball on a thin stand at palm height. It is a fully
+dynamic free body (0.05 kg) with contact friction, so closing the retargeted
+fingers around it produces a real grasp and the tactile sites light up. The
+stand, floor, and ball collide; the hand base stays kinematic. Pressing `r`
+restores the ball to its stand through `ShadowHand.reset_free_bodies`.
 
 `sim/stepping.py` accumulates wall-clock time and advances at most
 `max_catchup_s` of simulation per rendered frame. A stall longer than
@@ -227,10 +353,14 @@ fails if they diverge.
 - Perception threads only touch immutable data and their own model/session.
 - The phone service is a single thread; it owns HTTP access and the fusion
   state, and publishes only immutable samples.
+- The depth service is a single daemon thread that only calls `read_frame()`
+  and publishes immutable depth snapshots. OpenNI initialisation and teardown
+  happen on the main thread.
 - OpenCV HighGUI calls and MuJoCo viewer calls happen only on the main thread.
-- Cleanup order is capture → perception → phone → viewer → preview → recorder.
-- The perception and phone services join their threads with a timeout and log
-  any that fail to stop.
+- Cleanup order is capture (depth, then colour) → perception → phone → viewer →
+  preview → recorder.
+- The perception, phone, and depth services join their threads with a timeout
+  and log any that fail to stop.
 
 ## Extension points
 
@@ -241,6 +371,12 @@ fails if they diverge.
 - New mapping: change `Retargeter.map_metrics`; semantic names keep the XML
   coupling explicit.
 - New camera transport: implement the `FrameSource` protocol in `capture.py`.
+  A source that attaches `depth_mm`, `depth_intrinsics`, and `depth_ts` to its
+  packets participates in position control without further changes.
+- New depth provider: implement `start`, `close`, `latest`, `health`,
+  `device_name`, and `intrinsics` and pass it to `RGBDFrameSource`.
+- New position mapping: extend `position/controller.py`; sampling and the app
+  integration stay unchanged.
 - New orientation source: implement `start`, `close`, `latest`, and `health`
   (see the `PhoneSource` protocol in `phone/service.py`); the macro layer only
   needs `quat_wxyz`, `timestamp`, and `ready`.

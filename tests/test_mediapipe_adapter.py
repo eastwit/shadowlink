@@ -77,6 +77,7 @@ def test_backend_promotes_world_landmarks_to_an_observation():
     assert observation.frame_seq == 3
     np.testing.assert_array_equal(observation.keypoints_3d, detection.world_landmarks)
     np.testing.assert_array_equal(observation.keypoints_2d, detection.landmarks_2d)
+    np.testing.assert_array_equal(observation.detector_landmarks_2d, detection.landmarks_2d)
     np.testing.assert_array_equal(observation.bbox_xyxy, detection.bbox_xyxy)
     assert observation.anatomical_side is Side.RIGHT
     assert not observation.keypoints_3d.flags.writeable

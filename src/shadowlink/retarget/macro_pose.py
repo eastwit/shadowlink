@@ -1,11 +1,16 @@
-"""Relative macro orientation mapped from a controller onto the hand base.
+"""Absolute macro orientation mapped from a controller onto the hand base.
 
-The controller reports an absolute, gravity-aligned orientation whose yaw is
-unobservable.  Only the rotation *since the follow toggle was pressed* is
-meaningful, so the mapping is always ``q_zero^-1 ⊗ q_now``.  The resulting
-rotation is expressed in the controller's body frame, conjugated into the
-hand base frame by the fixed mount rotation, and finally applied on top of the
-hand orientation captured at toggle time.
+The controller reports a gravity-aligned attitude.  Its attitude at the zero
+instant defines the world reference; every later sample is applied relative to
+it.  The fixed mount encodes the anatomical correspondence between the phone
+and the hand (screen normal -> dorsum, phone top -> middle finger, phone left
+-> hand left), so the hand base is placed as
+
+    q_hand = q_phone ⊗ conj(q_mount)
+
+which makes the hand's anatomical frame identical to the phone's anatomical
+frame at all times.  At the zero instant the hand therefore starts in the same
+orientation as the phone in reality instead of keeping an arbitrary offset.
 """
 
 from __future__ import annotations
@@ -106,16 +111,23 @@ class MacroPoseController:
         """Hand orientation that defines the current zero.
 
         Before following starts this is the hand's initial orientation.  After
-        ``set_zero`` it is the visible hand pose captured at that moment.
+        ``set_zero`` it is the hand pose aligned with the phone attitude at the
+        zero instant, i.e. ``q_zero ⊗ conj(q_mount)``.
         """
         if self._reference_hand is not None:
             return self._reference_hand.copy()
         return self._initial.copy()
 
-    def set_zero(self, sample: OrientationSample, current_hand_quat) -> None:
-        """Record the controller zero and the hand orientation to build on."""
+    def set_zero(self, sample: OrientationSample) -> None:
+        """Anchor the mapping to the phone's current attitude.
+
+        The sample attitude becomes the world reference.  The hand base is
+        placed so that the hand's anatomical frame equals the phone's
+        anatomical frame in that world, so the hand's initial pose matches the
+        phone's real initial pose; later samples move relative to this zero.
+        """
         self._zero = q_norm(sample.quat_wxyz)
-        self._reference_hand = q_norm(current_hand_quat)
+        self._reference_hand = q_mul(self._zero, q_conj(self.settings.mount))
         self._out = self._reference_hand.copy()
         self._last_t = None
 
