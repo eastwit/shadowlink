@@ -48,7 +48,7 @@
     <!-- Small free grasp target on the tabletop. -->
     <body name="ball" pos="0.50 0.0 -0.19">
       <freejoint name="ball_free"/>
-      <geom name="ball" type="sphere" size="0.03" mass="0.05"
+      <geom name="ball" type="sphere" size="0.03" mass="0.01"
             material="ball" friction="1.2 0.01 0.002" condim="6"
             contype="1" conaffinity="1"/>
     </body>
