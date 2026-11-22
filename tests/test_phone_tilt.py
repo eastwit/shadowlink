@@ -153,7 +153,7 @@ def test_hybrid_controller_keeps_tag_yaw_and_phone_yaw_pitch():
     controller.update_orientation(t0, 1.06, True, phone_sample=p1)
     out = controller.update_orientation(t0, 1.07, True, phone_sample=p1)
     assert out is not None
-    assert abs(abs(out[2]) - abs(math.sin(math.radians(10.0)))) < 2e-3
+    assert abs(out[2] + math.sin(math.radians(10.0))) < 2e-3
 
     # Phone pitch (+Y) maps to hand roll.
     phone_pitch = q_from_axis_angle([0.0, 1.0, 0.0], math.radians(20.0))
@@ -161,7 +161,7 @@ def test_hybrid_controller_keeps_tag_yaw_and_phone_yaw_pitch():
     controller.update_orientation(t0, 1.08, True, phone_sample=p2)
     out = controller.update_orientation(t0, 1.09, True, phone_sample=p2)
     assert out is not None
-    assert abs(abs(out[3]) - abs(math.sin(math.radians(10.0)))) < 2e-3
+    assert abs(out[3] + math.sin(math.radians(10.0))) < 2e-3
 
     # Phone roll about the screen normal (+Z) is discarded.
     phone_roll = q_from_axis_angle([0.0, 0.0, 1.0], math.radians(30.0))
