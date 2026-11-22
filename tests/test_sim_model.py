@@ -51,6 +51,14 @@ def test_block_is_a_free_body_on_the_table(model):
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "table_top") > 0
 
 
+def test_hand_collision_geoms_have_high_friction(model):
+    collision = [index for index in range(model.ngeom) if int(model.geom_group[index]) == 3]
+    assert collision
+    for index in collision:
+        assert model.geom_friction[index, 0] >= 2.0
+        assert model.geom_friction[index, 1] >= 0.05
+
+
 def test_actuator_names_and_order(layout):
     assert layout.names == EXPECTED_ACTUATOR_NAMES
     assert layout.semantics == (
