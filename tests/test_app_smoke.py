@@ -18,6 +18,7 @@ from shadowlink.config import (
     CaptureConfig,
     DataConfig,
     PerceptionConfig,
+    PhoneConfig,
     PositionConfig,
     RuntimeConfig,
     SimConfig,
@@ -27,6 +28,7 @@ from shadowlink.config import (
 from shadowlink.math3d import q_angle_between, q_from_axis_angle, q_rotate
 from shadowlink.perception.selector import DetectionSelector
 from shadowlink.perception.worker import PerceptionService
+from shadowlink.phone import PhoneHealth, PhoneSample
 from shadowlink.retarget.smoothing import TrackingState
 from shadowlink.tag import TagHealth, TagSample
 from tests.conftest import synthetic_hand
@@ -102,6 +104,44 @@ class FakeTagSource:
         if not self._ready:
             return TagHealth(state="searching", camera="0", api="dshow")
         return TagHealth(state="running", camera="0", api="dshow", rate_hz=20.0, tag_id=5)
+
+
+class FakePhoneSource:
+    """A ready phyphox source whose pitch changes every sample."""
+
+    def __init__(self, clock, *, ready: bool = True) -> None:
+        self._clock = clock
+        self._ready = ready
+        self.started = False
+        self.closed = False
+        self.calls = 0
+
+    def start(self) -> None:
+        self.started = True
+
+    def close(self) -> None:
+        self.closed = True
+
+    def latest(self) -> PhoneSample | None:
+        if not self._ready:
+            return None
+        self.calls += 1
+        return PhoneSample(
+            quat_wxyz=q_from_axis_angle([1.0, 0.0, 0.0], math.radians(1.0 * self.calls)),
+            timestamp=self._clock(),
+            seq=self.calls,
+            ready=True,
+        )
+
+    @property
+    def health(self) -> PhoneHealth:
+        state = "running" if self._ready else "connecting"
+        return PhoneHealth(
+            state=state,
+            host="192.0.2.1:8080",
+            rate_hz=50.0 if self._ready else 0.0,
+            kind="attitude",
+        )
 
 
 def make_tag_config(tmp_path, *, max_frames: int = 0) -> AppConfig:
@@ -281,6 +321,39 @@ def test_shared_tag_camera_feeds_hand_perception(tmp_path):
         app.close()
     assert tag.started and tag.closed
     assert len(perception.submitted) > 0
+    assert app_threads() == []
+
+
+def test_phone_tilt_adds_the_two_non_tag_axes(tmp_path):
+    clock = StepClock(step_s=0.01)
+    config = replace(
+        make_tag_config(tmp_path),
+        phone=PhoneConfig(
+            source="phyphox",
+            host="192.0.2.1",
+            axes="yaw_pitch",
+            mount_preset="yaw_pitch",
+            deadzone_deg=0.0,
+        ),
+    )
+    phone = FakePhoneSource(clock)
+    app = TeleopApp(
+        config,
+        source=FakeSource(60, clock=clock),
+        perception=FakePerception(clock=clock),
+        tag_source=FakeTagSource(clock),
+        phone_source=phone,
+        clock=clock,
+    )
+    initial_hand = app.hand.macro_pose.copy()
+    try:
+        assert app.run() == 0
+    finally:
+        app.close()
+    assert phone.started and phone.closed
+    assert app.tag_pose.phone_initialized
+    assert app.tag_pose.phone_state == "tracking"
+    assert q_angle_between(initial_hand, app.hand.macro_pose) > math.radians(2.0)
     assert app_threads() == []
 
 

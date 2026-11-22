@@ -216,6 +216,32 @@ def q_from_two_vectors(source, target) -> np.ndarray:
     return q_norm(np.array([1.0 + dot, cross[0], cross[1], cross[2]]))
 
 
+def q_swing_twist(quat, axis) -> tuple[np.ndarray, np.ndarray]:
+    """Split ``quat`` into ``swing ⊗ twist`` about a body axis.
+
+    ``twist`` is the pure rotation about ``axis``; ``swing`` is what remains.
+    This is used to keep only the tag's blue-axis yaw while the phone supplies
+    the two tilt axes.
+    """
+    q = q_norm(quat)
+    direction = as_vector(axis)
+    norm = float(np.linalg.norm(direction))
+    if norm < _EPS:
+        raise ValueError("twist axis must be non-zero")
+    direction = direction / norm
+    projection = float(np.dot(q[1:], direction))
+    twist = np.array(
+        [q[0], projection * direction[0], projection * direction[1], projection * direction[2]],
+        dtype=np.float64,
+    )
+    twist_norm = float(np.linalg.norm(twist))
+    if twist_norm < _EPS:
+        return q.copy(), np.array([1.0, 0.0, 0.0, 0.0])
+    twist = twist / twist_norm
+    swing = q_mul(q, q_conj(twist))
+    return swing, twist
+
+
 def q_euler_deg(quat) -> tuple[float, float, float]:
     """Return ``(pitch, roll, yaw)`` in degrees for diagnostics.
 

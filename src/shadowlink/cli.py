@@ -234,6 +234,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--position-gain", type=float, default=None)
     run.add_argument("--position-deadzone", type=float, default=None, metavar="M")
+    run.add_argument("--phone", choices=["none", "phyphox"], default=None)
+    run.add_argument("--phone-host", default=None, help="phyphox IP or host[:port]")
+    run.add_argument("--phone-port", type=int, default=None)
+    run.add_argument(
+        "--phone-mount",
+        choices=["back", "in_hand", "custom"],
+        default=None,
+        help="phone-to-hand mount: back (strapped), in_hand (held screen-up), custom",
+    )
+    run.add_argument(
+        "--phone-scan",
+        action="store_true",
+        default=None,
+        help="scan the local /24 for phyphox when phone.host is unset",
+    )
     run.add_argument("--backend", choices=["hamer", "mediapipe"], default=None)
     run.add_argument("--side", choices=["any", "left", "right"], default=None)
     run.add_argument("--pick", choices=["largest", "center", "track"], default=None)

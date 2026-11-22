@@ -47,7 +47,7 @@ def test_dotted_overrides_are_typed_and_do_not_mutate_the_original():
         "retarget.nope=1",
         "retarget.flex_gain=abc",
         "perception.backend=openpose",
-        "phone.source=phyphox",
+        "phone.source=joycon",
         "joycon.side=left",
         "capture.depth_sdk=C:/sdk",
         "position.input=rgbd",
@@ -141,6 +141,12 @@ def test_tag_and_position_defaults():
     assert config.tag.min_decision_margin == pytest.approx(10.0)
     assert config.tag.max_hamming == 1
     assert config.tag.auto_follow is True
+    assert config.phone.source == "none"
+    assert config.phone.host is None
+    assert config.phone.port == 8080
+    assert config.phone.axes == "yaw_pitch"
+    assert config.phone.mount_preset == "yaw_pitch"
+    assert config.phone.deadzone_deg == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize(
@@ -174,6 +180,15 @@ def test_tag_and_position_defaults():
         "tag.mirror=flip",
         "tag.zero_mode=relative",
         "tag.zero_distance_m=0",
+        "phone.port=0",
+        "phone.poll_hz=0",
+        "phone.timeout_s=0",
+        "phone.stale_timeout_s=0",
+        "phone.axes=roll_only",
+        "phone.mount_preset=sideways",
+        "phone.gain=0",
+        "phone.deadzone_deg=180",
+        "phone.max_angle_deg=0",
         "position.preset=sideways",
         "position.gain=0",
         "position.deadzone_m=-0.1",
@@ -189,6 +204,33 @@ def test_invalid_tag_and_position_settings_are_rejected(pair):
 def test_tag_source_reuses_the_tag_camera_for_hands():
     config = AppConfig().apply_overrides(["capture.source=tag"])
     assert config.capture.source == "tag"
+
+
+def test_phone_phyphox_config_is_accepted():
+    config = AppConfig().apply_overrides(
+        [
+            "phone.source=phyphox",
+            "phone.host=192.0.2.10",
+            "phone.axes=yaw_pitch",
+            "phone.mount_preset=yaw_pitch",
+        ]
+    )
+    assert config.phone.source == "phyphox"
+    assert config.phone.host == "192.0.2.10"
+    assert config.phone.axes == "yaw_pitch"
+
+
+def test_phone_custom_mount_must_not_be_zero():
+    with pytest.raises(ConfigError):
+        AppConfig().apply_overrides(
+            [
+                "phone.mount_preset=custom",
+                "phone.mount_w=0",
+                "phone.mount_x=0",
+                "phone.mount_y=0",
+                "phone.mount_z=0",
+            ]
+        )
 
 
 def test_tag_camera_must_differ_from_the_hand_camera():

@@ -28,8 +28,10 @@ from shadowlink.math3d import (
     q_mul,
     q_norm,
     q_slerp,
+    q_swing_twist,
     q_to_axis_angle,
 )
+from shadowlink.phone.tilt import PhoneTiltController, PhoneTiltSettings
 from shadowlink.retarget.smoothing import OneEuroFilter, SlewLimiter
 from shadowlink.tag.types import TagSample
 
@@ -160,6 +162,7 @@ class TagControlSettings:
     rotation_jump_reject_rad: float
     rotation_jump_confirm_frames: int
     rotation_sign: np.ndarray
+    phone_tilt: PhoneTiltSettings | None = None
 
     def __post_init__(self) -> None:
         mount = q_norm(self.mount)
@@ -198,6 +201,7 @@ class TagControlSettings:
         cls,
         tag: TagConfig,
         position: PositionConfig,
+        phone=None,
     ) -> TagControlSettings:
         fixed_reference = (
             np.array([0.0, 0.0, float(tag.zero_distance_m)], dtype=np.float64)
@@ -213,6 +217,9 @@ class TagControlSettings:
             ],
             dtype=np.float64,
         )
+        phone_tilt = None
+        if phone is not None and getattr(phone, "source", "none") != "none":
+            phone_tilt = PhoneTiltSettings.from_config(phone)
         return cls(
             position=pos,
             mount=TAG_TO_HAND_QUAT.copy(),
@@ -224,6 +231,7 @@ class TagControlSettings:
             rotation_jump_reject_rad=math.radians(float(tag.rotation_jump_reject_deg)),
             rotation_jump_confirm_frames=int(tag.rotation_jump_confirm_frames),
             rotation_sign=sign,
+            phone_tilt=phone_tilt,
         )
 
 
@@ -393,6 +401,11 @@ class TagPoseController:
         self._last_raw_q: np.ndarray | None = None
         self._jump_candidate_q: np.ndarray | None = None
         self._jump_candidate_count = 0
+        self._phone = (
+            PhoneTiltController(settings.phone_tilt)
+            if settings.phone_tilt is not None
+            else None
+        )
 
     # ------------------------------------------------------------- properties
     @property
@@ -426,6 +439,20 @@ class TagPoseController:
         return self._zero_tag is not None
 
     @property
+    def phone_configured(self) -> bool:
+        return self._phone is not None
+
+    @property
+    def phone_initialized(self) -> bool:
+        return self._phone is not None and self._phone.initialized
+
+    @property
+    def phone_state(self) -> str:
+        if self._phone is None:
+            return "off"
+        return self._phone.state
+
+    @property
     def fixed_translation_zero(self) -> bool:
         return self._translation.fixed_translation_zero
 
@@ -443,6 +470,7 @@ class TagPoseController:
         sample: TagSample | None,
         now: float,
         enabled: bool,
+        phone_sample=None,
     ) -> np.ndarray | None:
         if not enabled:
             self._orientation_state = "paused"
@@ -461,6 +489,15 @@ class TagPoseController:
             return None
 
         relative_tag = q_mul(q_conj(self._zero_tag), sample.quat_wxyz)
+        phone_delta = None
+        if self._phone is not None:
+            # Keep only rotation about the tag's blue axis (hand yaw). The
+            # phone supplies the two tilt axes from gravity.
+            _, relative_tag = q_swing_twist(relative_tag, [0.0, 0.0, 1.0])
+            phone_delta = self._phone.update(phone_sample, now)
+            if phone_delta is None:
+                self._orientation_state = f"phone {self._phone.state}"
+                return None
         axis, angle = q_to_axis_angle(relative_tag)
         if angle < self.settings.rotation_deadzone_rad:
             angle = 0.0
@@ -476,6 +513,8 @@ class TagPoseController:
             q_mul(control_tag, q_conj(self._mount)),
         )
         target = q_mul(self._reference_hand, control_hand)
+        if phone_delta is not None:
+            target = q_mul(target, phone_delta)
 
         dt = 0.0 if self._last_t is None else min(max(now - self._last_t, 0.0), MAX_DT_S)
         self._last_t = now
@@ -492,9 +531,16 @@ class TagPoseController:
         self._orientation_state = "tracking"
         return self._out.copy()
 
+    def _raw_gate_quat(self, sample: TagSample) -> np.ndarray:
+        quat = sample.quat_wxyz
+        if self._phone is not None and self._zero_tag is not None:
+            relative = q_mul(q_conj(self._zero_tag), quat)
+            _, quat = q_swing_twist(relative, [0.0, 0.0, 1.0])
+        return quat
+
     def _accept_raw_orientation(self, sample: TagSample) -> bool:
         """Reject single-frame pose flips while allowing sustained motion."""
-        quat = sample.quat_wxyz
+        quat = self._raw_gate_quat(sample)
         if self._last_raw_q is None:
             self._last_raw_q = quat.copy()
             return True
@@ -530,13 +576,24 @@ class TagPoseController:
         self._jump_candidate_q = None
         self._jump_candidate_count = 0
 
-    def zero_orientation(self, sample: TagSample | None, hand_quat) -> bool:
+    def zero_orientation(
+        self,
+        sample: TagSample | None,
+        hand_quat,
+        phone_sample=None,
+    ) -> bool:
         if sample is None or not sample.ready:
             self._orientation_state = "waiting"
             return False
+        phone_zero = True
+        if self._phone is not None:
+            phone_zero = self._phone.zero(phone_sample)
+            if not phone_zero:
+                self._orientation_state = "waiting for phone"
+                return False
         self._zero_tag = q_norm(sample.quat_wxyz)
         self._reference_hand = q_norm(hand_quat)
-        self._last_raw_q = self._zero_tag.copy()
+        self._last_raw_q = self._raw_gate_quat(sample)
         self._jump_candidate_q = None
         self._jump_candidate_count = 0
         self._out = self._reference_hand.copy()
@@ -547,12 +604,12 @@ class TagPoseController:
     def zero_translation(self, now: float) -> bool:
         return self._translation.zero(now)
 
-    def zero(self, sample: TagSample | None, now: float, hand_quat) -> bool:
+    def zero(self, sample: TagSample | None, now: float, hand_quat, phone_sample=None) -> bool:
         """Zero translation and orientation at the current tag/hand pose."""
         if sample is not None:
             self.update_translation(sample, now, False)
         ok = self.zero_translation(now)
-        ok = self.zero_orientation(sample, hand_quat) and ok
+        ok = self.zero_orientation(sample, hand_quat, phone_sample=phone_sample) and ok
         return ok
 
     def reset(self) -> None:
@@ -563,3 +620,5 @@ class TagPoseController:
         self._last_t = None
         self._orientation_state = "waiting"
         self.reset_orientation_gate()
+        if self._phone is not None:
+            self._phone.reset()

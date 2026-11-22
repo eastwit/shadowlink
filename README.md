@@ -163,6 +163,27 @@ used by the AprilTag detector for the hand pose. Point that camera so both the
 hand and the tag are visible. The hand-camera setting (`capture.camera`) is
 ignored in this mode.
 
+That profile also enables a phone on the hand for the two tag axes that are
+least stable. The phone runs [phyphox](https://phyphox.org) with **Remote
+Access** enabled; ShadowLink polls it over HTTP (no extra Python package). The
+tag supplies yaw from its blue axis, while the phone supplies yaw and pitch;
+the phone roll channel is deliberately ignored. Set `phone.host` to the address
+shown by phyphox:
+
+```yaml
+phone:
+  source: phyphox
+  host: 192.0.2.10
+  port: 8080
+  axes: yaw_pitch
+  mount_preset: yaw_pitch
+```
+
+`mount_preset=yaw_pitch` maps the phone's yaw/pitch onto the hand's two non-yaw
+axes. If your phone is mounted differently, use `back`, `in_hand`, or
+`custom` with `mount_w/x/y/z`. The HUD shows the phone rate and tilt state;
+`g` still toggles orientation follow, and `0` re-zeroes tag and phone together.
+
 `configs/ipwebcam_plugcam.yaml` uses the older two-phone setup: IP Webcam at
 `http://192.168.1.109:8080/video` for hands and Plugcam at DirectShow index `1`
 for the tag. Update those two values when the phone IP or enumeration changes.

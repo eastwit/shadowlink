@@ -152,6 +152,25 @@ shadowlink demo
 HaMeR/MediaPipe 做手指识别和 AprilTag 做整手位姿，因此需要让手和 tag
 都出现在同一画面里。这个模式下 `capture.camera` 不再使用。
 
+这个配置还会用手机补齐 tag 最不稳的两个轴。手机运行
+[phyphox](https://phyphox.org) 并打开 **Remote Access**，ShadowLink 通过
+HTTP 轮询，不需要额外 Python 依赖。tag 的蓝轴提供 yaw，手机提供 yaw 和
+pitch，手机的 roll 数据故意不使用。把 `phone.host` 改成 phyphox 显示的地址：
+
+```yaml
+phone:
+  source: phyphox
+  host: 192.0.2.10
+  port: 8080
+  axes: yaw_pitch
+  mount_preset: yaw_pitch
+```
+
+`mount_preset=yaw_pitch` 会把手机的 yaw/pitch 映射到灵巧手除 yaw 外的两个
+轴。手机安装方式不同时可改用 `back`、`in_hand`，或自定义 `mount_w/x/y/z`。
+HUD 会显示手机状态和采样率；`g` 仍然开关朝向跟随，`0` 会同时重置 tag
+和手机的零点。
+
 `configs/ipwebcam_plugcam.yaml` 是原来的双手机配置：IP Webcam
 `http://192.168.1.109:8080/video` 做手势，Plugcam 使用 DirectShow 索引 `1`
 做 tag。手机 IP 或相机索引变化时改这两个值即可。

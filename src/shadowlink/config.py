@@ -23,6 +23,9 @@ BackendName = Literal["hamer", "mediapipe"]
 MacroPivot = Literal["palm", "wrist", "forearm"]
 PositionPreset = Literal["front", "palm", "back", "overhead"]
 TagMirror = Literal["auto", "on", "off"]
+PhoneSource = Literal["none", "phyphox"]
+PhoneAxes = Literal["yaw_pitch", "pitch_roll"]
+PhoneMount = Literal["yaw_pitch", "back", "in_hand", "custom"]
 
 
 class ConfigError(ValueError):
@@ -169,6 +172,30 @@ class TagConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PhoneConfig:
+    """Optional phyphox input used for the two non-yaw hand axes."""
+
+    source: PhoneSource = "none"
+    host: str | None = None
+    port: int = 8080
+    poll_hz: float = 50.0
+    timeout_s: float = 1.0
+    retry_s: float = 1.5
+    auto_start: bool = True
+    auto_discover: bool = False
+    stale_timeout_s: float = 0.35
+    axes: PhoneAxes = "yaw_pitch"
+    mount_preset: PhoneMount = "yaw_pitch"
+    mount_w: float = 0.0
+    mount_x: float = 0.0
+    mount_y: float = 0.7071068
+    mount_z: float = 0.7071068
+    gain: float = 1.0
+    deadzone_deg: float = 1.0
+    max_angle_deg: float = 180.0
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeConfig:
     max_frames: int = 0
     debug: bool = False
@@ -185,6 +212,7 @@ class AppConfig:
     data: DataConfig = DataConfig()
     position: PositionConfig = PositionConfig()
     tag: TagConfig = TagConfig()
+    phone: PhoneConfig = PhoneConfig()
     runtime: RuntimeConfig = RuntimeConfig()
 
     # ------------------------------------------------------------------ load
@@ -372,6 +400,41 @@ class AppConfig:
             raise ConfigError("tag.min_decision_margin must be finite and >= 0")
         if not 0 <= tag.max_hamming <= 3:
             raise ConfigError("tag.max_hamming must be in [0, 3]")
+
+        phone = self.phone
+        if phone.source not in ("none", "phyphox"):
+            raise ConfigError("phone.source must be none or phyphox")
+        if phone.host is not None and not str(phone.host).strip():
+            raise ConfigError("phone.host must be non-empty or null")
+        if phone.source == "phyphox" and not phone.host and not phone.auto_discover:
+            raise ConfigError("phone.source=phyphox requires phone.host or phone.auto_discover")
+        if not 1 <= int(phone.port) <= 65535:
+            raise ConfigError("phone.port must be in [1, 65535]")
+        if not math.isfinite(phone.poll_hz) or phone.poll_hz <= 0:
+            raise ConfigError("phone.poll_hz must be finite and > 0")
+        if not math.isfinite(phone.timeout_s) or phone.timeout_s <= 0:
+            raise ConfigError("phone.timeout_s must be finite and > 0")
+        if not math.isfinite(phone.retry_s) or phone.retry_s < 0:
+            raise ConfigError("phone.retry_s must be finite and >= 0")
+        if not math.isfinite(phone.stale_timeout_s) or phone.stale_timeout_s <= 0:
+            raise ConfigError("phone.stale_timeout_s must be finite and > 0")
+        if phone.axes not in ("yaw_pitch", "pitch_roll"):
+            raise ConfigError("phone.axes must be yaw_pitch or pitch_roll")
+        if phone.mount_preset not in ("yaw_pitch", "back", "in_hand", "custom"):
+            raise ConfigError(
+                "phone.mount_preset must be yaw_pitch, back, in_hand, or custom"
+            )
+        mount = (phone.mount_w, phone.mount_x, phone.mount_y, phone.mount_z)
+        if not all(math.isfinite(value) for value in mount):
+            raise ConfigError("phone.mount_w/x/y/z must be finite")
+        if math.sqrt(sum(value * value for value in mount)) < 1e-6:
+            raise ConfigError("phone.mount quaternion must not be zero")
+        if not math.isfinite(phone.gain) or phone.gain <= 0:
+            raise ConfigError("phone.gain must be finite and > 0")
+        if not 0 <= phone.deadzone_deg < phone.max_angle_deg <= 180:
+            raise ConfigError(
+                "phone angles must satisfy 0 <= deadzone < max_angle <= 180"
+            )
         if self.runtime.max_frames < 0:
             raise ConfigError("runtime.max_frames must be >= 0")
 

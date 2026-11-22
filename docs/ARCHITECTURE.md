@@ -106,6 +106,14 @@ off; `g` toggles following without changing it, `0` explicitly re-zeroes, and
 return to zero. The app writes the resulting quaternion and offset to
 `ShadowHand.set_macro_pose`.
 
+When `phone.source=phyphox`, the tag contributes only its blue-axis twist
+(yaw), and the phyphox attitude contributes yaw+pitch through `phone/tilt.py`.
+The phone roll channel is removed with a swing-twist split about the phone's
+long axis. `phone.mount_preset=yaw_pitch` maps phone yaw to hand pitch and phone
+pitch to hand roll, while the tag keeps hand yaw. Phone and tag zero are
+captured together; if the phone is stale the orientation freezes while tag
+translation continues.
+
 ## Simulation
 
 `sim/model.py` loads the MJCF and actuator layout. `sim/shadow_hand.py` writes

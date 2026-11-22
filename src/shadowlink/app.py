@@ -28,6 +28,7 @@ from shadowlink.paths import (
 from shadowlink.perception.base import create_backend, create_detector
 from shadowlink.perception.selector import DetectionSelector
 from shadowlink.perception.worker import PerceptionService
+from shadowlink.phone import NullPhoneSource, PhyphoxService
 from shadowlink.retarget.calibration import CalibrationError, CalibrationStore, Neutral
 from shadowlink.retarget.geometry import HandGeometryError
 from shadowlink.retarget.mapper import Retargeter
@@ -70,6 +71,7 @@ class TeleopApp:
         source=None,
         perception=None,
         tag_source=None,
+        phone_source=None,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -105,8 +107,20 @@ class TeleopApp:
         self.tag: TagService = (
             tag_source if tag_source is not None else TagService(config.tag, clock=clock)
         )
+        self._phone_enabled = (
+            phone_source is not None or config.phone.source != "none"
+        )
+        phone_config = config.phone
+        if phone_source is not None:
+            self.phone = phone_source
+            if phone_config.source == "none":
+                phone_config = replace(phone_config, source="phyphox")
+        elif config.phone.source == "phyphox":
+            self.phone = PhyphoxService(config.phone, clock=clock)
+        else:
+            self.phone = NullPhoneSource()
         self.tag_pose = TagPoseController(
-            TagControlSettings.from_config(config.tag, config.position),
+            TagControlSettings.from_config(config.tag, config.position, phone_config),
             self.hand.macro_pose,
         )
         self.tag_positioning = bool(config.position.enabled)
@@ -161,6 +175,7 @@ class TeleopApp:
 
         self._closed = False
         self._last_status = ""
+        self._phone_ready_logged = False
 
     # ------------------------------------------------------------------ setup
     def _load_calibration(self):
@@ -195,6 +210,7 @@ class TeleopApp:
         limit = max_frames or self.config.runtime.max_frames or 0
         self.perception.start()
         self.tag.start()
+        self.phone.start()
         self.viewer.launch()
         self.stepper.reset(self._clock())
         self.controller.reset()
@@ -225,16 +241,41 @@ class TeleopApp:
                         log.debug("skipping degenerate observation: %s", exc)
 
                 tag_sample = self.tag.latest()
-                # The first valid tag orientation is the absolute orientation
+                phone_sample = self.phone.latest()
+                if (
+                    self._phone_enabled
+                    and phone_sample is not None
+                    and not self._phone_ready_logged
+                ):
+                    ph = self.phone.health
+                    log.info(
+                        "phone attitude ready (%s, %.0f Hz); using yaw+pitch, ignoring roll",
+                        ph.kind or "phyphox",
+                        ph.rate_hz,
+                    )
+                    self._phone_ready_logged = True
+                # The first valid tag+phone pose is the absolute orientation
                 # zero for the session. Capture it even if follow is currently
                 # disabled, so later `g` toggles do not change the zero.
                 if (
                     tag_sample is not None
                     and tag_sample.ready
                     and not self.tag_pose.initialized
+                    and self.tag_pose.zero_orientation(
+                        tag_sample,
+                        self.hand.macro_pose,
+                        phone_sample=phone_sample,
+                    )
                 ):
-                    self.tag_pose.zero_orientation(tag_sample, self.hand.macro_pose)
-                    self._last_status = "absolute tag orientation zero captured"
+                    if self.tag_pose.phone_configured:
+                        self._last_status = (
+                            "absolute tag+phone orientation zero captured"
+                        )
+                        log.info(
+                            "orientation zero captured (tag blue-axis yaw + phone yaw/pitch)"
+                        )
+                    else:
+                        self._last_status = "absolute tag orientation zero captured"
                 if (
                     self._tag_auto_follow_armed
                     and not self.tag_following
@@ -242,12 +283,15 @@ class TeleopApp:
                     and tag_sample.ready
                 ):
                     self._tag_auto_follow_armed = False
-                    self._enable_tag_follow(tag_sample)
+                    self._enable_tag_follow(tag_sample, phone_sample)
                 translation = self.tag_pose.update_translation(
                     tag_sample, now, self.tag_positioning
                 )
                 tag_quat = self.tag_pose.update_orientation(
-                    tag_sample, now, self.tag_following
+                    tag_sample,
+                    now,
+                    self.tag_following,
+                    phone_sample=phone_sample,
                 )
 
                 targets = self.controller.update(target, now)
@@ -382,13 +426,23 @@ class TeleopApp:
         return True
 
     # ------------------------------------------------------------- tag control
-    def _enable_tag_follow(self, sample: TagSample) -> None:
+    def _enable_tag_follow(self, sample: TagSample, phone_sample=None) -> None:
         self.tag_following = True
-        self._last_status = "tag follow on (absolute zero from the first valid tag)"
-        log.info(
-            "tag follow on at %.3f %.3f %.3f m (orientation zero latched)",
-            *sample.translation_m,
-        )
+        if not self.tag_pose.initialized:
+            self.tag_pose.zero_orientation(
+                sample,
+                self.hand.macro_pose,
+                phone_sample=phone_sample,
+            )
+        zero = "tag+phone" if self.tag_pose.phone_configured else "tag"
+        self._last_status = f"tag follow on ({zero} orientation zero)"
+        if self.tag_pose.initialized:
+            log.info(
+                "tag follow on at %.3f %.3f %.3f m (orientation zero latched)",
+                *sample.translation_m,
+            )
+        else:
+            log.info("tag follow on; waiting for a phone sample to latch the zero")
 
     def _toggle_tag_follow(self) -> bool:
         if self.tag_following:
@@ -397,26 +451,41 @@ class TeleopApp:
             self._last_status = "tag orientation follow off; macro pose frozen"
             return True
         sample = self.tag.latest()
+        phone_sample = self.phone.latest()
         if sample is None or not sample.ready:
-            self._last_status = "tag not detected; point the tag at the Astra camera"
+            self._last_status = "tag not detected; point the tag at the camera"
             return False
         if not self.tag_pose.initialized:
-            self.tag_pose.zero_orientation(sample, self.hand.macro_pose)
+            if not self.tag_pose.zero_orientation(
+                sample,
+                self.hand.macro_pose,
+                phone_sample=phone_sample,
+            ):
+                self._last_status = "phone not ready; waiting for a phyphox sample"
+                return False
         else:
             self.tag_pose.reset_orientation_gate()
         self.tag_following = True
-        self._last_status = "tag orientation follow on (absolute first-tag zero)"
+        self._last_status = "tag orientation follow on (zero set)"
         return True
 
     def _zero_tag(self, now: float) -> bool:
         sample = self.tag.latest()
+        phone_sample = self.phone.latest()
         if sample is None or not sample.ready:
             self._last_status = "tag not detected; cannot zero"
             return False
-        self.tag_pose.zero(sample, now, self.hand.macro_pose)
+        if not self.tag_pose.zero(
+            sample,
+            now,
+            self.hand.macro_pose,
+            phone_sample=phone_sample,
+        ):
+            self._last_status = "phone not ready; cannot zero the orientation"
+            return False
         self.tag_following = True
         self._tag_auto_follow_armed = False
-        self._last_status = "tag world frame set; position and orientation re-zeroed"
+        self._last_status = "world frame set; position and orientation re-zeroed"
         return True
 
     def _toggle_position(self) -> bool:
@@ -521,6 +590,13 @@ class TeleopApp:
             f"{pitch:+5.1f} {roll:+5.1f} {yaw:+5.1f}"
         )
 
+        if self._phone_enabled:
+            ph = self.phone.health
+            lines.append(
+                f"phone {ph.state} | {ph.host or '-'} | {ph.rate_hz:.0f} Hz | "
+                f"{ph.kind or '-'} | tilt {self.tag_pose.phone_state}"
+            )
+
         hints = ["[g]tagrot", "[0]tagzero", "[p]tagpos", "[c]alibrate", "[r]reset", "[q]quit"]
         lines.append(" ".join(hints))
         if extra:
@@ -574,6 +650,10 @@ class TeleopApp:
             self.tag.close()
         except Exception:
             log.exception("error closing tag source")
+        try:
+            self.phone.close()
+        except Exception:
+            log.exception("error closing phone source")
         try:
             self.viewer.close()
         except Exception:
@@ -654,6 +734,27 @@ def apply_cli_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfi
         zero_distance_m=get("tag_zero_distance"),
         auto_follow=get("tag_follow"),
     )
+
+    phone = {}
+    if get("phone") is not None:
+        phone["source"] = get("phone")
+    if get("phone_port") is not None:
+        phone["port"] = int(get("phone_port"))
+    if get("phone_host") is not None:
+        from shadowlink.phone.client import parse_host_port
+
+        host, parsed_port = parse_host_port(
+            get("phone_host"),
+            default_port=get("phone_port") or config.phone.port,
+        )
+        phone["host"] = host
+        if get("phone_port") is None:
+            phone["port"] = parsed_port
+    if get("phone_mount") is not None:
+        phone["mount_preset"] = get("phone_mount")
+    if get("phone_scan") is not None:
+        phone["auto_discover"] = bool(get("phone_scan"))
+    config = _set(config, "phone", **phone)
 
     config = _set(config, "sim", viewer=get("viewer"))
     config = _set(
