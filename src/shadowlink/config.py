@@ -186,10 +186,10 @@ class PhoneConfig:
     stale_timeout_s: float = 0.35
     axes: PhoneAxes = "yaw_pitch"
     mount_preset: PhoneMount = "yaw_pitch"
-    mount_w: float = -0.5
-    mount_x: float = 0.5
-    mount_y: float = -0.5
-    mount_z: float = 0.5
+    mount_w: float = 0.7071068
+    mount_x: float = 0.0
+    mount_y: float = -0.7071068
+    mount_z: float = 0.0
     gain: float = 1.0
     deadzone_deg: float = 1.0
     max_angle_deg: float = 180.0

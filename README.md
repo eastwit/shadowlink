@@ -205,6 +205,11 @@ python -c "from pygrabber.dshow_graph import FilterGraph; print(list(enumerate(F
 | `g` | toggle tag whole-hand orientation follow |
 | `0` | re-zero both tag position and orientation at the current tag pose |
 | `p` | toggle tag whole-hand translation |
+| `m` | cycle the phone-to-hand mount mapping and re-zero orientation |
+
+The `m` key cycles eight axis/sign mappings while the app keeps running. The
+HUD line `phone ... mount <name>` shows the active one; use it if the phone's
+yaw/pitch axes feel swapped or inverted.
 | `r` | reset physics, targets, tag zero, translation, orientation, and the ball |
 
 ### Common options

@@ -192,6 +192,11 @@ python -c "from pygrabber.dshow_graph import FilterGraph; print(list(enumerate(F
 | `g` | 开关 tag 整手朝向跟随 |
 | `0` | 以当前 tag 位姿重新定义位置和朝向零点 |
 | `p` | 开关 tag 整手平移 |
+| `m` | 循环切换手机到灵巧手的轴向映射，并自动重新锁零 |
+
+`m` 可以在程序运行时循环 8 种轴向/符号组合。HUD 里的
+`phone ... mount <名称>` 会显示当前映射；如果手机 yaw/pitch 的轴互换了或
+方向反了，直接按 `m` 试到正确为止。
 | `r` | 重置物理状态、目标、tag 零点、平移、朝向和小球 |
 
 ### 常用参数

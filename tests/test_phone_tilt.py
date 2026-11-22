@@ -14,7 +14,11 @@ from shadowlink.math3d import (
     q_swing_twist,
 )
 from shadowlink.phone.service import PhoneSample
-from shadowlink.phone.tilt import PhoneTiltController, PhoneTiltSettings
+from shadowlink.phone.tilt import (
+    MOUNT_OPTIONS,
+    PhoneTiltController,
+    PhoneTiltSettings,
+)
 from shadowlink.tag.controller import TagControlSettings, TagPoseController
 from shadowlink.tag.types import TagSample
 
@@ -50,6 +54,20 @@ def test_swing_twist_reconstructs_the_rotation_and_isolates_the_axis():
     assert q_angle_between(q_mul(swing, twist), combined) < 1e-9
     assert q_angle_between(twist, yaw) < 1e-9
     np.testing.assert_allclose(twist[1:3], [0.0, 0.0], atol=1e-12)
+
+
+def test_mount_cycle_covers_every_axis_mapping():
+    settings = PhoneTiltSettings(
+        mount=MOUNT_OPTIONS[0][1],
+        gain=1.0,
+        deadzone_rad=0.0,
+        max_angle_rad=math.pi,
+        stale_timeout_s=0.5,
+    )
+    controller = PhoneTiltController(settings)
+    assert controller.mount_name == MOUNT_OPTIONS[0][0]
+    names = {controller.cycle_mount() for _ in range(len(MOUNT_OPTIONS))}
+    assert names == {name for name, _ in MOUNT_OPTIONS}
 
 
 def test_gravity_mode_uses_tilt_without_yaw():
@@ -147,21 +165,21 @@ def test_hybrid_controller_keeps_tag_yaw_and_phone_yaw_pitch():
     assert out is not None
     assert q_angle_between(out, q_from_axis_angle([0.0, 0.0, 1.0], 0.0)) < 1e-6
 
-    # Phone yaw (+X) maps to hand pitch.
+    # Phone yaw (+X) maps to hand roll.
     phone_yaw = q_from_axis_angle([1.0, 0.0, 0.0], math.radians(20.0))
     p1 = phone_sample(phone_yaw, ts=1.06, seq=2)
     controller.update_orientation(t0, 1.06, True, phone_sample=p1)
     out = controller.update_orientation(t0, 1.07, True, phone_sample=p1)
     assert out is not None
-    assert abs(out[2] + math.sin(math.radians(10.0))) < 2e-3
+    assert abs(out[3] - math.sin(math.radians(10.0))) < 2e-3
 
-    # Phone pitch (+Y) maps to hand roll.
+    # Phone pitch (+Y) maps to hand pitch.
     phone_pitch = q_from_axis_angle([0.0, 1.0, 0.0], math.radians(20.0))
     p2 = phone_sample(phone_pitch, ts=1.08, seq=3)
     controller.update_orientation(t0, 1.08, True, phone_sample=p2)
     out = controller.update_orientation(t0, 1.09, True, phone_sample=p2)
     assert out is not None
-    assert abs(out[3] + math.sin(math.radians(10.0))) < 2e-3
+    assert abs(out[2] - math.sin(math.radians(10.0))) < 2e-3
 
     # Phone roll about the screen normal (+Z) is discarded.
     phone_roll = q_from_axis_angle([0.0, 0.0, 1.0], math.radians(30.0))

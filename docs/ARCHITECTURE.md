@@ -112,7 +112,8 @@ The phone roll channel is removed with a swing-twist split about the screen
 normal (user-frame +Z). `phone.mount_preset=yaw_pitch` maps phone yaw to hand
 pitch and phone pitch to hand roll, while the tag keeps hand yaw. Phone and tag zero are
 captured together; if the phone is stale the orientation freezes while tag
-translation continues.
+translation continues. `m` cycles eight proper phone mount rotations and
+re-zeroes, covering swapped axes and both directions without a restart.
 
 ## Simulation
 

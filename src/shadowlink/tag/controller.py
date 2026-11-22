@@ -453,6 +453,17 @@ class TagPoseController:
         return self._phone.state
 
     @property
+    def phone_mount_name(self) -> str:
+        if self._phone is None:
+            return "off"
+        return self._phone.mount_name
+
+    def cycle_phone_mount(self) -> str | None:
+        if self._phone is None:
+            return None
+        return self._phone.cycle_mount()
+
+    @property
     def fixed_translation_zero(self) -> bool:
         return self._translation.fixed_translation_zero
 

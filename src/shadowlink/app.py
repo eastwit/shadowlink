@@ -326,6 +326,20 @@ class TeleopApp:
                     self._zero_tag(now)
                 elif key == ord("p"):
                     self._toggle_position()
+                elif key == ord("m"):
+                    name = self.tag_pose.cycle_phone_mount()
+                    if name is not None:
+                        if tag_sample is not None and phone_sample is not None:
+                            self.tag_pose.zero_orientation(
+                                tag_sample,
+                                self.hand.macro_pose,
+                                phone_sample=phone_sample,
+                            )
+                            self._last_status = f"phone mount {name}; re-zeroed"
+                        else:
+                            self._last_status = (
+                                f"phone mount {name}; waiting for tag/phone to re-zero"
+                            )
                 elif key == ord("r"):
                     self._reset()
                 if limit and frames >= limit:
@@ -594,10 +608,19 @@ class TeleopApp:
             ph = self.phone.health
             lines.append(
                 f"phone {ph.state} | {ph.host or '-'} | {ph.rate_hz:.0f} Hz | "
-                f"{ph.kind or '-'} | tilt {self.tag_pose.phone_state}"
+                f"{ph.kind or '-'} | tilt {self.tag_pose.phone_state} | "
+                f"mount {self.tag_pose.phone_mount_name}"
             )
 
-        hints = ["[g]tagrot", "[0]tagzero", "[p]tagpos", "[c]alibrate", "[r]reset", "[q]quit"]
+        hints = [
+            "[g]tagrot",
+            "[0]tagzero",
+            "[p]tagpos",
+            "[m]phonemount",
+            "[c]alibrate",
+            "[r]reset",
+            "[q]quit",
+        ]
         lines.append(" ".join(hints))
         if extra:
             lines.extend(extra)

@@ -31,16 +31,30 @@ from shadowlink.phone.service import PhoneSample
 # the screen.  The service rotates Android's native frame into this one.
 BACK_MOUNT = np.array([0.0, 0.7071068, 0.0, -0.7071068], dtype=np.float64)
 IN_HAND_MOUNT = np.array([0.7071068, 0.0, 0.7071068, 0.0], dtype=np.float64)
-# Cyclic map with an extra 180-degree turn about the phone screen normal.
-# Phone +Z (roll) -> hand +X (yaw, discarded), while phone yaw/pitch map to
-# hand -Y and -Z. This flips both user-facing tilt directions without touching
-# the tag-driven yaw.
-YAW_PITCH_MOUNT = np.array([-0.5, 0.5, -0.5, 0.5], dtype=np.float64)
+# The phone's long axis (+X) aligns with the hand's middle-finger axis (+Z,
+# roll), its width (+Y) aligns with the hand's left-right axis (+Y, pitch), and
+# its screen normal (+Z) aligns with the palm normal (+X, yaw). The tag already
+# supplies yaw, so the phone screen-normal twist is discarded.
+YAW_PITCH_MOUNT = np.array([0.7071068, 0.0, -0.7071068, 0.0], dtype=np.float64)
 
 _WORLD_UP = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 # The service rotates Android into a user-facing frame whose +Z is the screen
 # normal. The phone roll channel is rotation about that +Z axis.
 _ROLL_AXIS = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+# All proper rotations that map the phone screen normal onto +/- hand yaw while
+# keeping phone X/Y on hand Z/Y. Cycling these live covers swapped axes and
+# every independent sign combination without a restart.
+MOUNT_OPTIONS: tuple[tuple[str, np.ndarray], ...] = (
+    ("swap-a", np.array([0.7071068, 0.0, -0.7071068, 0.0])),  # X+Z  Y+Y  Z-X
+    ("swap-b", np.array([0.0, 0.7071068, 0.0, 0.7071068])),  # X+Z  Y-Y  Z+X
+    ("swap-c", np.array([0.7071068, 0.0, 0.7071068, 0.0])),  # X-Z  Y+Y  Z+X
+    ("swap-d", np.array([0.0, -0.7071068, 0.0, 0.7071068])),  # X-Z  Y-Y  Z-X
+    ("cyclic-a", np.array([0.5, 0.5, 0.5, 0.5])),            # X+Y  Y+Z  Z+X
+    ("cyclic-b", np.array([0.5, -0.5, -0.5, 0.5])),          # X+Y  Y-Z  Z-X
+    ("cyclic-c", np.array([0.5, 0.5, -0.5, -0.5])),          # X-Y  Y+Z  Z-X
+    ("cyclic-d", np.array([0.5, -0.5, 0.5, -0.5])),          # X-Y  Y-Z  Z+X
+)
 
 
 def mount_for_config(config) -> np.ndarray:
@@ -110,10 +124,34 @@ class PhoneTiltController:
 
     def __init__(self, settings: PhoneTiltSettings) -> None:
         self.settings = settings
+        self._mount = settings.mount.copy()
+        self._mount_index = self._index_of(settings.mount)
         self._zero_quat: np.ndarray | None = None
         self._zero_up: np.ndarray | None = None
         self._up: np.ndarray | None = None
         self._state = "waiting"
+
+    @staticmethod
+    def _index_of(mount) -> int:
+        for index, (_, candidate) in enumerate(MOUNT_OPTIONS):
+            if q_angle_between(mount, candidate) < 1e-6:
+                return index
+        return -1
+
+    @property
+    def mount(self) -> np.ndarray:
+        return self._mount.copy()
+
+    @property
+    def mount_name(self) -> str:
+        if 0 <= self._mount_index < len(MOUNT_OPTIONS):
+            return MOUNT_OPTIONS[self._mount_index][0]
+        return "custom"
+
+    def cycle_mount(self) -> str:
+        self._mount_index = (self._mount_index + 1) % len(MOUNT_OPTIONS)
+        self._mount = MOUNT_OPTIONS[self._mount_index][1].copy()
+        return self.mount_name
 
     @property
     def initialized(self) -> bool:
@@ -190,7 +228,7 @@ class PhoneTiltController:
                 self.settings.max_angle_rad,
             )
         control = q_from_axis_angle(axis, angle)
-        mount = self.settings.mount
+        mount = self._mount
         delta = q_mul(q_mul(mount, control), q_conj(mount))
         self._state = "tracking"
         return q_norm(delta)
