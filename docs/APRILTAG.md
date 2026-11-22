@@ -72,7 +72,7 @@ camera. Hide it with `--no-tag-show` or
 | `g` | toggle tag orientation follow; the first-valid-tag zero is latched and unchanged |
 | `p` | toggle tag translation (the fixed reference is unchanged) |
 | `0` | explicitly re-zero orientation at the current tag pose and reset fixed translation to zero |
-| `r` | reset physics, target, tag zero, translation, orientation, and the ball |
+| `r` | reset physics, target, tag zero, translation, orientation, and the block |
 | `c` / `q` / `Esc` | calibrate fingers / quit |
 
 The first valid tag orientation is captured as an **absolute, latched
@@ -88,11 +88,11 @@ explicitly want a new zero (and reset translation).
 ## Mapping
 
 At startup and after `r`, the hand base is set **palm down**, with the middle
-finger pointing toward the ball (+world x). Translation uses
+finger pointing toward the block (+world x). Translation uses
 `position.preset` (`overhead` by default):
 
 ```text
-tag +x (image right) -> world +x (toward the ball)
+tag +x (image right) -> world +x (toward the block)
 tag +y (image down)  -> world -y
 tag +z (away)        -> world -z  (moving closer -> world +z / up)
 t_zero = (0, 0, tag.zero_distance_m)   # image center at 1 m by default

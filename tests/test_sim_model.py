@@ -28,7 +28,7 @@ def layout(model):
 
 
 def test_model_dimensions(model):
-    # 24 hand DOFs plus a free ball on the tabletop.
+    # 24 hand DOFs plus a free block on the tabletop.
     assert model.nq == 31
     assert model.nv == 30
     assert model.nu == 20
@@ -37,15 +37,17 @@ def test_model_dimensions(model):
     assert model.opt.timestep == pytest.approx(0.002)
 
 
-def test_ball_is_a_free_body_on_the_table(model):
+def test_block_is_a_free_body_on_the_table(model):
     import mujoco
 
-    ball = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ball")
-    assert ball > 0
-    joint = int(model.body_jntadr[ball])
+    block = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "block")
+    assert block > 0
+    joint = int(model.body_jntadr[block])
     assert int(model.jnt_type[joint]) == int(mujoco.mjtJoint.mjJNT_FREE)
-    # Keyframes address the hand DOFs first, so the ball must come after.
+    # Keyframes address the hand DOFs first, so the block must come after.
     assert int(model.jnt_qposadr[joint]) == 24
+    geom = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "block")
+    assert int(model.geom_type[geom]) == int(mujoco.mjtGeom.mjGEOM_BOX)
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "table_top") > 0
 
 

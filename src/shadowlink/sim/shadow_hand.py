@@ -208,7 +208,7 @@ class ShadowHand:
     def reset_free_bodies(self) -> None:
         """Restore every non-hand world object to its initial pose.
 
-        The grasp ball (and any future free body) is reset here. Hand joints
+        The grasp block (and any future free body) is reset here. Hand joints
         are left untouched; the caller decides when to reapply the start pose.
         """
         qpos_sizes = {

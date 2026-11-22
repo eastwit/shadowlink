@@ -50,7 +50,7 @@ CALIBRATION_MAX_AGE_S = 0.25
 
 # Hand-local +X is the palm normal, +Z points along the middle finger, and +Y
 # is the hand's left. This pose puts the palm down, the middle finger toward
-# the tabletop ball (+world x), and the hand's left toward +world y.
+# the tabletop block (+world x), and the hand's left toward +world y.
 PALM_DOWN_QUAT = q_from_matrix(
     np.array(
         [

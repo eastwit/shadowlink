@@ -170,7 +170,7 @@ def make_tag_config(tmp_path, *, max_frames: int = 0) -> AppConfig:
     )
 
 
-def test_initial_pose_is_palm_down_with_middle_finger_toward_the_ball(tmp_path):
+def test_initial_pose_is_palm_down_with_middle_finger_toward_the_block(tmp_path):
     clock = StepClock()
     app = TeleopApp(
         make_config(tmp_path),
