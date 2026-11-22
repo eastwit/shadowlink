@@ -31,11 +31,12 @@ from shadowlink.phone.service import PhoneSample
 # the screen.  The service rotates Android's native frame into this one.
 BACK_MOUNT = np.array([0.0, 0.7071068, 0.0, -0.7071068], dtype=np.float64)
 IN_HAND_MOUNT = np.array([0.7071068, 0.0, 0.7071068, 0.0], dtype=np.float64)
-# The phone's long axis (+X) aligns with the hand's middle-finger axis (+Z,
-# roll), its width (+Y) aligns with the hand's left-right axis (+Y, pitch), and
-# its screen normal (+Z) aligns with the palm normal (+X, yaw). The tag already
-# supplies yaw, so the phone screen-normal twist is discarded.
-YAW_PITCH_MOUNT = np.array([0.7071068, 0.0, -0.7071068, 0.0], dtype=np.float64)
+# The phone's long axis (+X) aligns with the hand's middle-finger axis (roll),
+# its width (+Y) aligns with the hand's left-right axis (pitch), and its screen
+# normal (+Z) aligns with the palm normal (yaw). The tag already supplies yaw,
+# so the phone screen-normal twist is discarded. This mount is swap-d: both
+# phone tilt axes point in the hand-positive direction.
+YAW_PITCH_MOUNT = np.array([0.0, -0.7071068, 0.0, 0.7071068], dtype=np.float64)
 
 _WORLD_UP = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 # The service rotates Android into a user-facing frame whose +Z is the screen

@@ -123,10 +123,10 @@ phone:
   stale_timeout_s: 0.35
   axes: yaw_pitch
   mount_preset: yaw_pitch
-  mount_w: 0.7071068
-  mount_x: 0.0
-  mount_y: -0.7071068
-  mount_z: 0.0
+  mount_w: 0.0
+  mount_x: -0.7071068
+  mount_y: 0.0
+  mount_z: 0.7071068
   gain: 1.0
   deadzone_deg: 1.0
   max_angle_deg: 180.0
