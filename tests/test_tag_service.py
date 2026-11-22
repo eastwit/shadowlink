@@ -69,6 +69,10 @@ def test_service_publishes_pose_and_auto_flips_a_mirrored_camera():
         preview = service.latest_preview()
         assert preview is not None
         assert preview.shape == (48, 64, 3)
+        raw = service.wait_frame(-1, timeout=0.5)
+        assert raw is not None
+        assert raw[2].shape == (48, 64, 3)
+        assert raw[2].flags.writeable is False
     finally:
         service.close()
     assert service.health.state == "stopped"

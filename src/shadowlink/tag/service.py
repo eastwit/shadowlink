@@ -175,6 +175,10 @@ class TagService:
         self._sample: TagSample | None = None
         self._preview: np.ndarray | None = None
         self._preview_ts = 0.0
+        self._raw_frame: np.ndarray | None = None
+        self._raw_seq = 0
+        self._raw_ts = 0.0
+        self._frame_cond = threading.Condition(self._lock)
         self._health = TagHealth(
             state="idle",
             camera=str(config.camera),
@@ -197,6 +201,10 @@ class TagService:
             self._sample = None
             self._preview = None
             self._preview_ts = 0.0
+            self._raw_frame = None
+            self._raw_seq = 0
+            self._raw_ts = 0.0
+            self._frame_cond.notify_all()
         self._seq = 0
         self._rate_times.clear()
         self._mirror_state = (
@@ -230,6 +238,8 @@ class TagService:
         self._thread = None
         with self._lock:
             self._preview = None
+            self._raw_frame = None
+            self._frame_cond.notify_all()
         self._set_health(
             TagHealth(
                 state="stopped",
@@ -257,6 +267,19 @@ class TagService:
         if image is None or self._clock() - timestamp > 2.0:
             return None
         return image
+
+    def wait_frame(
+        self,
+        after_seq: int,
+        timeout: float = 0.75,
+    ) -> tuple[int, float, np.ndarray] | None:
+        """Wait for a raw (mirror-corrected) camera frame newer than ``after_seq``."""
+        with self._frame_cond:
+            if self._raw_frame is None or self._raw_seq <= after_seq:
+                self._frame_cond.wait(timeout)
+            if self._raw_frame is None or self._raw_seq <= after_seq:
+                return None
+            return self._raw_seq, self._raw_ts, self._raw_frame
 
     @property
     def health(self) -> TagHealth:
@@ -365,6 +388,7 @@ class TagService:
                         gray = mirrored
                         poses = mirror_poses
                         log.info("tag camera image is mirrored; horizontal flip enabled")
+            self._store_raw_frame(frame)
             if self._mirror_state is None:
                 # Do not drive the hand from hamming>0 guesses before the
                 # camera orientation is known.
@@ -459,6 +483,16 @@ class TagService:
                 )
             )
         return poses
+
+    def _store_raw_frame(self, frame: np.ndarray) -> None:
+        image = frame if frame.ndim == 3 else cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        image = np.ascontiguousarray(image).copy()
+        image.setflags(write=False)
+        with self._frame_cond:
+            self._raw_seq += 1
+            self._raw_frame = image
+            self._raw_ts = self._clock()
+            self._frame_cond.notify_all()
 
     def _store_preview(
         self,

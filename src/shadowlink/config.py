@@ -31,7 +31,7 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class CaptureConfig:
-    source: Literal["camera", "video"] = "camera"
+    source: Literal["camera", "video", "tag"] = "camera"
     camera: str = "1"
     video: str | None = None
     width: int = 0
@@ -245,8 +245,8 @@ class AppConfig:
         s = self.smoothing
         sim = self.sim
 
-        if c.source not in ("camera", "video"):
-            raise ConfigError("capture.source must be camera or video")
+        if c.source not in ("camera", "video", "tag"):
+            raise ConfigError("capture.source must be camera, video, or tag")
         if c.source == "video" and not c.video:
             raise ConfigError("capture.source=video requires capture.video")
         if c.width < 0 or c.height < 0:

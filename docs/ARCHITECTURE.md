@@ -43,7 +43,10 @@ Dependency rules:
 
 1. **Capture.** `OpenCVFrameSource` opens a camera or video, applies mirroring
    exactly once, and returns a frozen `FramePacket` with a monotonically
-   increasing `seq` and a `time.monotonic()` timestamp. `SyntheticFrameSource`
+   increasing `seq` and a `time.monotonic()` timestamp. With
+   `capture.source: tag`, `TagFrameSource` instead consumes the raw frames that
+   `TagService` already captured, so one camera feeds both hand perception and
+   tag detection without a second `VideoCapture`. `SyntheticFrameSource`
    provides deterministic frames for tests.
 2. **Submit.** The app submits every `perception.skip`-th frame to
    `PerceptionService`.
@@ -71,14 +74,17 @@ The finger neutral pose is calibrated per backend and side.
 
 ## AprilTag 6-DoF
 
-`tag/service.py` owns one daemon thread named `shadowlink-tag`. It opens a
-dedicated UVC camera (independent of `capture.py`), detects one AprilTag pose per
-frame through `pupil-apriltags`, and publishes an immutable `TagSample`
-(translation + `wxyz` quaternion + timestamp + sequence) into a latest-value
-slot. The detector import is lazy; a missing package or camera becomes a
-`TagHealth` error and does not stop finger teleoperation. `mirror=auto` tries the
-normal frame first and only flips when a valid `hamming=0` decode requires it,
-using mirrored principal-point intrinsics for the resulting pose.
+`tag/service.py` owns one daemon thread named `shadowlink-tag`. It opens a UVC
+camera, detects one AprilTag pose per frame through `pupil-apriltags`, and
+publishes an immutable `TagSample` (translation + `wxyz` quaternion + timestamp
++ sequence) into a latest-value slot. It also publishes the corrected raw BGR
+frame with a sequence number and wakes `wait_frame()` waiters. When
+`capture.source: tag`, `tag/source.py` wraps those frames as `FramePacket`s for
+the hand pipeline; otherwise the tag camera stays independent of `capture.py`.
+The detector import is lazy; a missing package or camera becomes a `TagHealth`
+error and does not stop finger teleoperation. `mirror=auto` tries the normal
+frame first and only flips when a valid `hamming=0` decode requires it, using
+mirrored principal-point intrinsics for the resulting pose.
 
 `tag/controller.py` owns the relative mapping. At zero it records both the tag
 pose and the current hand-base orientation. Translation is a median-windowed

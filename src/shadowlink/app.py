@@ -37,6 +37,7 @@ from shadowlink.sim.shadow_hand import ShadowHand
 from shadowlink.sim.stepping import FixedStepClock
 from shadowlink.sim.viewer import Viewer
 from shadowlink.tag import TagControlSettings, TagPoseController, TagService, TagSample
+from shadowlink.tag.source import TagFrameSource
 from shadowlink.types import HandObservation, PerceptionResult
 from shadowlink.ui.overlay import draw_hud, draw_observation
 from shadowlink.ui.telemetry import Telemetry
@@ -101,7 +102,24 @@ class TeleopApp:
             reset_stall_s=config.sim.reset_stall_s,
         )
 
-        self.source = source if source is not None else open_source(config.capture, clock=clock)
+        self.tag: TagService = (
+            tag_source if tag_source is not None else TagService(config.tag, clock=clock)
+        )
+        self.tag_pose = TagPoseController(
+            TagControlSettings.from_config(config.tag, config.position),
+            self.hand.macro_pose,
+        )
+        self.tag_positioning = bool(config.position.enabled)
+        self.tag_following = False
+        self._tag_auto_follow_armed = bool(config.tag.auto_follow)
+
+        if source is not None:
+            self.source = source
+        elif config.capture.source == "tag":
+            self.source = TagFrameSource(self.tag, clock=clock)
+        else:
+            self.source = open_source(config.capture, clock=clock)
+
         if perception is None:
             models = ModelPaths.resolve(
                 config.data.data_dir,
@@ -119,17 +137,6 @@ class TeleopApp:
                 clock=clock,
             )
         self.perception = perception
-
-        self.tag: TagService = (
-            tag_source if tag_source is not None else TagService(config.tag, clock=clock)
-        )
-        self.tag_pose = TagPoseController(
-            TagControlSettings.from_config(config.tag, config.position),
-            self.hand.macro_pose,
-        )
-        self.tag_positioning = bool(config.position.enabled)
-        self.tag_following = False
-        self._tag_auto_follow_armed = bool(config.tag.auto_follow)
 
         self.viewer = Viewer(
             self.model,
@@ -309,6 +316,8 @@ class TeleopApp:
     ) -> bool:
         """Capture a neutral pose after the hand has been held still briefly."""
         self.perception.start()
+        if self.tag is not None:
+            self.tag.start()
         self.viewer.launch()
         self.stepper.reset(self._clock())
         deadline = self._clock() + timeout_s

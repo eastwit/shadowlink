@@ -186,6 +186,11 @@ def test_invalid_tag_and_position_settings_are_rejected(pair):
         AppConfig().apply_overrides([pair])
 
 
+def test_tag_source_reuses_the_tag_camera_for_hands():
+    config = AppConfig().apply_overrides(["capture.source=tag"])
+    assert config.capture.source == "tag"
+
+
 def test_tag_camera_must_differ_from_the_hand_camera():
     with pytest.raises(ConfigError):
         AppConfig().apply_overrides(["tag.camera=1"])

@@ -130,6 +130,10 @@ the MJCF/tactile assets.
 # Built-in camera + HaMeR + Astra tag + MuJoCo viewer
 shadowlink run --backend hamer --data-dir D:/models/hamer/_DATA
 
+# One phone: Plugcam supplies frames for both hands and the tag
+shadowlink run --config configs/plugcam_hand_tag.yaml --backend hamer \
+  --data-dir D:/models/hamer/_DATA
+
 # Two-phone setup: IP Webcam for hands + Plugcam for the tag
 shadowlink run --config configs/ipwebcam_plugcam.yaml --backend hamer \
   --data-dir D:/models/hamer/_DATA
@@ -152,7 +156,14 @@ Default camera indices:
 | `0` | Astra Pro HD Camera | tag camera |
 | `1` | built-in HD Webcam | finger camera |
 
-`configs/ipwebcam_plugcam.yaml` uses the current phone setup: IP Webcam at
+`configs/plugcam_hand_tag.yaml` is the single-camera profile. It sets
+`capture.source: tag`, so the `TagService` camera becomes the only frame source:
+each raw frame is published once, used by HaMeR/MediaPipe for the fingers, and
+used by the AprilTag detector for the hand pose. Point that camera so both the
+hand and the tag are visible. The hand-camera setting (`capture.camera`) is
+ignored in this mode.
+
+`configs/ipwebcam_plugcam.yaml` uses the older two-phone setup: IP Webcam at
 `http://192.168.1.109:8080/video` for hands and Plugcam at DirectShow index `1`
 for the tag. Update those two values when the phone IP or enumeration changes.
 

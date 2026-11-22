@@ -68,6 +68,8 @@ class FakeTagSource:
         self.started = False
         self.closed = False
         self.calls = 0
+        self._frame_seq = 0
+        self._frame = np.zeros((48, 64, 3), dtype=np.uint8)
 
     def start(self) -> None:
         self.started = True
@@ -87,6 +89,13 @@ class FakeTagSource:
             seq=self.calls,
             tag_id=5,
         )
+
+    def wait_frame(self, after_seq: int, timeout: float = 0.75):
+        self._frame_seq += 1
+        return self._frame_seq, self._clock(), self._frame
+
+    def latest_preview(self):
+        return self._frame
 
     @property
     def health(self) -> TagHealth:
@@ -248,6 +257,31 @@ def test_frame_limit_stops_the_run(tmp_path):
     finally:
         app.close()
     assert source.produced == 5
+
+
+def test_shared_tag_camera_feeds_hand_perception(tmp_path):
+    clock = StepClock(step_s=0.01)
+    config = replace(
+        make_config(tmp_path, max_frames=6),
+        capture=CaptureConfig(source="tag", camera="1"),
+    )
+    tag = FakeTagSource(clock)
+    perception = FakePerception(clock=clock)
+    app = TeleopApp(
+        config,
+        source=None,
+        perception=perception,
+        tag_source=tag,
+        clock=clock,
+    )
+    try:
+        assert app.source.__class__.__name__ == "TagFrameSource"
+        assert app.run() == 0
+    finally:
+        app.close()
+    assert tag.started and tag.closed
+    assert len(perception.submitted) > 0
+    assert app_threads() == []
 
 
 def test_tag_source_drives_whole_hand_position_and_orientation(tmp_path):

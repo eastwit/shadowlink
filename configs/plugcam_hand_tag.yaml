@@ -1,0 +1,23 @@
+# Single-camera profile: the Plugcam tag camera also feeds hand/finger
+# perception. Point it so both the hand and the tag are visible.
+#
+#   shadowlink run --config configs/plugcam_hand_tag.yaml \
+#     --backend hamer --data-dir D:/models/hamer/_DATA
+
+capture:
+  source: tag
+  mirror: false
+
+position:
+  preset: overhead
+  enabled: true
+
+tag:
+  camera: "1"             # Plugcam Camera in the current DirectShow enumeration
+  api: dshow
+  width: 1920
+  height: 1080
+  quad_decimate: 2.0
+  zero_mode: fixed
+  zero_distance_m: 1.0
+  auto_follow: true

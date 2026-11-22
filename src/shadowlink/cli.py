@@ -159,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="camera/video hand teleoperation")
     _common(run)
-    run.add_argument("--source", choices=["camera", "video"], default=None)
+    run.add_argument("--source", choices=["camera", "video", "tag"], default=None)
     run.add_argument("--camera", default=None, help="camera index, file, or stream URL")
     run.add_argument(
         "--no-position",

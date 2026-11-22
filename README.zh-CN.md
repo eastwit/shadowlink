@@ -121,6 +121,10 @@ shadowlink doctor --data-dir D:/models/hamer/_DATA --strict-models
 # 内置摄像头 + HaMeR + Astra tag + MuJoCo viewer
 shadowlink run --backend hamer --data-dir D:/models/hamer/_DATA
 
+# 单相机：Plugcam 同时提供手势和 tag 画面
+shadowlink run --config configs/plugcam_hand_tag.yaml --backend hamer \
+  --data-dir D:/models/hamer/_DATA
+
 # 双手机：IP Webcam 做手势 + Plugcam 做 tag
 shadowlink run --config configs/ipwebcam_plugcam.yaml --backend hamer \
   --data-dir D:/models/hamer/_DATA
@@ -143,7 +147,12 @@ shadowlink demo
 | `0` | Astra Pro HD Camera | tag 相机 |
 | `1` | 内置 HD Webcam | 手指相机 |
 
-`configs/ipwebcam_plugcam.yaml` 是当前双手机配置：IP Webcam
+`configs/plugcam_hand_tag.yaml` 是单相机配置：设置 `capture.source: tag` 后，
+`TagService` 的相机会成为唯一画面来源。每一帧原始图像会同时送给
+HaMeR/MediaPipe 做手指识别和 AprilTag 做整手位姿，因此需要让手和 tag
+都出现在同一画面里。这个模式下 `capture.camera` 不再使用。
+
+`configs/ipwebcam_plugcam.yaml` 是原来的双手机配置：IP Webcam
 `http://192.168.1.109:8080/video` 做手势，Plugcam 使用 DirectShow 索引 `1`
 做 tag。手机 IP 或相机索引变化时改这两个值即可。
 
