@@ -26,20 +26,27 @@ class TagFrameSource:
         self.service = service
         self._clock = clock
         self._last_seq = -1
+        self._closed = False
 
     def read(self) -> FramePacket | None:
-        result = self.service.wait_frame(self._last_seq, timeout=0.75)
-        if result is None:
-            return None
-        seq, capture_ts, image = result
-        self._last_seq = seq
-        return FramePacket(
-            seq=seq,
-            capture_ts=capture_ts,
-            image_bgr=image,
-            mirrored=False,
-            source_fps=self.fps,
-        )
+        # Opening a high-resolution UVC camera can take longer than one
+        # wait_frame timeout. Keep waiting while the service is starting or
+        # searching; only give up when it has actually failed or stopped.
+        while not self._closed:
+            result = self.service.wait_frame(self._last_seq, timeout=0.75)
+            if result is not None:
+                seq, capture_ts, image = result
+                self._last_seq = seq
+                return FramePacket(
+                    seq=seq,
+                    capture_ts=capture_ts,
+                    image_bgr=image,
+                    mirrored=False,
+                    source_fps=self.fps,
+                )
+            if self.service.health.state in ("error", "stopped"):
+                return None
+        return None
 
     @property
     def fps(self) -> float | None:
@@ -55,4 +62,4 @@ class TagFrameSource:
 
     def close(self) -> None:
         # The TagService owns the camera and is closed by the app.
-        pass
+        self._closed = True
