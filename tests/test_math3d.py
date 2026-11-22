@@ -11,12 +11,14 @@ from shadowlink.math3d import (
     q_angle_between,
     q_conj,
     q_from_axis_angle,
+    q_from_matrix,
     q_from_two_vectors,
     q_mul,
     q_norm,
     q_rotate,
     q_slerp,
     q_to_axis_angle,
+    q_to_matrix,
 )
 
 IDENTITY = np.array([1.0, 0.0, 0.0, 0.0])
@@ -70,6 +72,14 @@ def test_two_vector_alignment():
     np.testing.assert_allclose(q_rotate(q, [0.0, 0.0, 1.0]), [0.0, 1.0, 0.0], atol=1e-12)
     opposite = q_from_two_vectors([1.0, 0.0, 0.0], [-1.0, 0.0, 0.0])
     np.testing.assert_allclose(q_rotate(opposite, [1.0, 0.0, 0.0]), [-1.0, 0.0, 0.0], atol=1e-12)
+
+
+def test_matrix_quaternion_round_trip():
+    quat = q_from_axis_angle([0.3, -0.4, 0.8], math.radians(73.0))
+    matrix = q_to_matrix(quat)
+    recovered = q_from_matrix(matrix)
+    assert q_angle_between(quat, recovered) < 1e-9
+    np.testing.assert_allclose(q_to_matrix(recovered), matrix, atol=1e-12)
 
 
 def test_invalid_quaternions_are_rejected():

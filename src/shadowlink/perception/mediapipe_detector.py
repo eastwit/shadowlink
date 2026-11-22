@@ -28,15 +28,15 @@ class MediaPipeDetector:
         num_hands: int = 4,
         running_mode: str = "video",
     ) -> None:
+        if running_mode not in {"image", "video"}:
+            raise ValueError(f"unknown MediaPipe running mode: {running_mode!r}")
+
         try:
             import mediapipe as mp
         except ImportError as exc:  # pragma: no cover - depends on environment
             raise ModelUnavailableError(
                 "mediapipe is not installed; install it with `pip install mediapipe`"
             ) from exc
-
-        if running_mode not in {"image", "video"}:
-            raise ValueError(f"unknown MediaPipe running mode: {running_mode!r}")
         self._mp = mp
         self._running_mode = running_mode
         self._last_timestamp_ms = -1

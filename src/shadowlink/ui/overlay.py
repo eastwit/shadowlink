@@ -178,13 +178,14 @@ def draw_hud(
     color: tuple[int, int, int] = WHITE,
     scale: float = 0.5,
     line_height: int = 18,
+    thickness: int = 1,
 ) -> None:
     if not lines:
         return
     x, y = origin
     widths = []
     for line in lines:
-        (width, _), _ = cv2.getTextSize(line, FONT, scale, 1)
+        (width, _), _ = cv2.getTextSize(line, FONT, scale, thickness)
         widths.append(width)
     panel_width = max(widths) + 12
     panel_height = line_height * len(lines) + 10
@@ -199,7 +200,16 @@ def draw_hud(
         baseline = y + index * line_height
         if baseline >= image.shape[0] - 2:
             break
-        cv2.putText(image, line, (x, baseline), FONT, scale, color, 1, cv2.LINE_AA)
+        cv2.putText(
+            image,
+            line,
+            (x, baseline),
+            FONT,
+            scale,
+            color,
+            thickness,
+            cv2.LINE_AA,
+        )
 
 
 def _pixel(point) -> tuple[int, int]:

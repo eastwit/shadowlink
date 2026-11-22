@@ -1,8 +1,11 @@
 """Typed application configuration.
 
-``configs/default.yaml`` mirrors the dataclass defaults one-to-one.  Values can
-be overridden with dotted CLI assignments such as
-``--set retarget.flex_gain=1.2``.  Priority is CLI > YAML > dataclass default.
+ShadowLink now has one whole-hand control source: a hand-held AprilTag. The
+built-in webcam still reconstructs the fingers. ``configs/default.yaml`` mirrors
+the dataclass defaults one-to-one.
+
+Values can be overridden with dotted CLI assignments such as
+``--set tag.rotation_gain=1.2``. Priority is CLI > YAML > dataclass default.
 """
 
 from __future__ import annotations
@@ -17,10 +20,9 @@ import yaml
 
 DrawMode = Literal["skeleton", "mesh", "none"]
 BackendName = Literal["hamer", "mediapipe"]
-PhoneName = Literal["none", "phyphox"]
 MacroPivot = Literal["palm", "wrist", "forearm"]
-MountPreset = Literal["back", "in_hand", "custom"]
-PositionPreset = Literal["front", "palm", "back"]
+PositionPreset = Literal["front", "palm", "back", "overhead"]
+TagMirror = Literal["auto", "on", "off"]
 
 
 class ConfigError(ValueError):
@@ -29,8 +31,8 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class CaptureConfig:
-    source: Literal["camera", "video", "rgbd"] = "camera"
-    camera: str = "0"
+    source: Literal["camera", "video"] = "camera"
+    camera: str = "1"
     video: str | None = None
     width: int = 0
     height: int = 0
@@ -38,14 +40,6 @@ class CaptureConfig:
     api: Literal["any", "dshow", "msmf"] = "any"
     buffer_size: int = 1
     fps: float = 0.0
-    depth_sdk: str | None = None
-    depth_width: int = 640
-    depth_height: int = 480
-    depth_fps: int = 30
-    depth_fx: float | None = None
-    depth_fy: float | None = None
-    depth_cx: float | None = None
-    depth_cy: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,57 +107,61 @@ class DataConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class PhoneConfig:
-    source: PhoneName = "none"
-    host: str | None = None
-    port: int = 8080
-    poll_hz: float = 30.0
-    timeout_s: float = 1.0
-    retry_s: float = 1.5
-    auto_start: bool = True
-    auto_discover: bool = False
-    auto_follow: bool = False
-    pivot: MacroPivot = "wrist"
-    stale_timeout_s: float = 0.35
-    mount_preset: MountPreset = "back"
-    mount_w: float = 0.0
-    mount_x: float = 0.7071068
-    mount_y: float = 0.0
-    mount_z: float = -0.7071068
-    gain: float = 1.0
-    deadzone_deg: float = 1.5
-    max_angle_deg: float = 180.0
-    smoothing_tau_s: float = 0.06
-    max_rate_rad_s: float = 6.0
-
-
-@dataclass(frozen=True, slots=True)
 class PositionConfig:
+    """Relative tag-to-world mapping shared by translation and rotation."""
+
     enabled: bool = True
-    preset: PositionPreset = "palm"
-    hand_relative: bool = True
+    preset: PositionPreset = "overhead"
     invert_x: bool = False
     invert_y: bool = False
     invert_z: bool = False
     gain: float = 1.0
     deadzone_m: float = 0.01
-    max_offset_m: float = 0.25
-    min_depth_mm: float = 150.0
-    max_depth_mm: float = 1500.0
-    sample_radius_px: int = 5
-    min_valid_pixels: int = 8
-    min_landmarks: int = 3
-    max_spread_m: float = 0.12
     temporal_window: int = 3
-    max_depth_skew_s: float = 0.15
     stale_timeout_s: float = 0.5
     auto_zero: bool = True
-    align_offset_x: float = 0.0
-    align_offset_y: float = 0.0
-    min_cutoff: float = 1.0
-    beta: float = 0.1
+    min_cutoff: float = 1.2
+    beta: float = 1.5
     d_cutoff: float = 1.0
     max_rate_m_s: float = 0.8
+
+
+@dataclass(frozen=True, slots=True)
+class TagConfig:
+    """Dedicated AprilTag camera and 6-DoF controller settings."""
+
+    camera: str = "0"
+    api: Literal["any", "dshow", "msmf"] = "dshow"
+    width: int = 640
+    height: int = 480
+    fps: float = 30.0
+    mirror: TagMirror = "auto"
+    show: bool = True
+    zero_mode: Literal["sample", "fixed"] = "fixed"
+    zero_distance_m: float = 1.0
+    hfov_deg: float = 60.0
+    fx: float | None = None
+    fy: float | None = None
+    cx: float | None = None
+    cy: float | None = None
+    family: str = "tag36h11"
+    tag_id: int | None = 5
+    size_m: float = 0.057
+    quad_decimate: float = 1.0
+    refine_edges: bool = True
+    nthreads: int = 4
+    retry_s: float = 1.0
+    stale_timeout_s: float = 0.5
+    auto_follow: bool = True
+    pivot: MacroPivot = "wrist"
+    rotation_gain: float = 1.0
+    rotation_deadzone_deg: float = 1.5
+    rotation_max_angle_deg: float = 180.0
+    rotation_smoothing_tau_s: float = 0.06
+    rotation_max_rate_rad_s: float = 6.0
+    rotation_invert_x: bool = False
+    rotation_invert_y: bool = False
+    rotation_invert_z: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,8 +179,8 @@ class AppConfig:
     sim: SimConfig = SimConfig()
     ui: UIConfig = UIConfig()
     data: DataConfig = DataConfig()
-    phone: PhoneConfig = PhoneConfig()
     position: PositionConfig = PositionConfig()
+    tag: TagConfig = TagConfig()
     runtime: RuntimeConfig = RuntimeConfig()
 
     # ------------------------------------------------------------------ load
@@ -243,6 +241,8 @@ class AppConfig:
         s = self.smoothing
         sim = self.sim
 
+        if c.source not in ("camera", "video"):
+            raise ConfigError("capture.source must be camera or video")
         if c.source == "video" and not c.video:
             raise ConfigError("capture.source=video requires capture.video")
         if c.width < 0 or c.height < 0:
@@ -251,22 +251,6 @@ class AppConfig:
             raise ConfigError("capture.buffer_size must be >= 1")
         if c.fps < 0:
             raise ConfigError("capture.fps must be >= 0")
-        if c.depth_width <= 0 or c.depth_height <= 0:
-            raise ConfigError("capture.depth_width/height must be > 0")
-        if c.depth_fps <= 0:
-            raise ConfigError("capture.depth_fps must be > 0")
-        for name in ("depth_fx", "depth_fy", "depth_cx", "depth_cy"):
-            value = getattr(c, name)
-            if value is not None and not math.isfinite(value):
-                raise ConfigError(f"capture.{name} must be finite")
-        if c.depth_fx is not None and c.depth_fx <= 0:
-            raise ConfigError("capture.depth_fx must be > 0")
-        if c.depth_fy is not None and c.depth_fy <= 0:
-            raise ConfigError("capture.depth_fy must be > 0")
-        if c.depth_cx is not None and not 0 <= c.depth_cx < c.depth_width:
-            raise ConfigError("capture.depth_cx must be inside the depth image")
-        if c.depth_cy is not None and not 0 <= c.depth_cy < c.depth_height:
-            raise ConfigError("capture.depth_cy must be inside the depth image")
         if p.skip < 1:
             raise ConfigError("perception.skip must be >= 1")
         if p.max_age_s <= 0:
@@ -305,73 +289,77 @@ class AppConfig:
             raise ConfigError("sim.reset_stall_s must be >= 0")
         if sim.touch_force_scale <= 0:
             raise ConfigError("sim.touch_force_scale must be > 0")
-        phone = self.phone
-        if not 1 <= phone.port <= 65535:
-            raise ConfigError("phone.port must be between 1 and 65535")
-        if not math.isfinite(phone.poll_hz) or phone.poll_hz <= 0:
-            raise ConfigError("phone.poll_hz must be finite and > 0")
-        if not math.isfinite(phone.timeout_s) or phone.timeout_s <= 0:
-            raise ConfigError("phone.timeout_s must be finite and > 0")
-        if not math.isfinite(phone.retry_s) or phone.retry_s <= 0:
-            raise ConfigError("phone.retry_s must be finite and > 0")
-        if phone.source == "phyphox" and not phone.host and not phone.auto_discover:
-            raise ConfigError(
-                "phone.host is required when phone.source=phyphox unless auto_discover is enabled"
-            )
-        if phone.pivot not in ("palm", "wrist", "forearm"):
-            raise ConfigError("phone.pivot must be one of palm, wrist, forearm")
-        if phone.mount_preset not in ("back", "in_hand", "custom"):
-            raise ConfigError("phone.mount_preset must be one of back, in_hand, custom")
-        if phone.stale_timeout_s <= 0:
-            raise ConfigError("phone.stale_timeout_s must be > 0")
-        if not math.isfinite(phone.gain) or phone.gain < 0:
-            raise ConfigError("phone.gain must be finite and >= 0")
-        if not 0 <= phone.deadzone_deg < phone.max_angle_deg <= 180:
-            raise ConfigError("phone angles must satisfy 0 <= deadzone_deg < max_angle_deg <= 180")
-        if phone.smoothing_tau_s < 0:
-            raise ConfigError("phone.smoothing_tau_s must be >= 0")
-        if phone.max_rate_rad_s <= 0:
-            raise ConfigError("phone.max_rate_rad_s must be > 0")
-        mount = (phone.mount_w, phone.mount_x, phone.mount_y, phone.mount_z)
-        if not all(math.isfinite(value) for value in mount):
-            raise ConfigError("phone.mount_* must be finite")
-        if math.sqrt(sum(value * value for value in mount)) < 1e-9:
-            raise ConfigError("phone mount quaternion must be non-zero")
         pos = self.position
-        if pos.preset not in ("front", "palm", "back"):
-            raise ConfigError("position.preset must be one of front, palm, back")
+        if pos.preset not in ("front", "palm", "back", "overhead"):
+            raise ConfigError(
+                "position.preset must be one of front, palm, back, overhead"
+            )
         if not math.isfinite(pos.gain) or pos.gain <= 0:
             raise ConfigError("position.gain must be finite and > 0")
-        if not math.isfinite(pos.max_offset_m) or pos.max_offset_m <= 0:
-            raise ConfigError("position.max_offset_m must be finite and > 0")
-        if not math.isfinite(pos.deadzone_m) or not 0 <= pos.deadzone_m < pos.max_offset_m:
-            raise ConfigError("position.deadzone_m must be in [0, max_offset_m)")
-        if not 0 < pos.min_depth_mm < pos.max_depth_mm:
-            raise ConfigError("position depth range must satisfy 0 < min < max")
-        if pos.sample_radius_px < 1:
-            raise ConfigError("position.sample_radius_px must be >= 1")
-        if pos.min_valid_pixels < 1:
-            raise ConfigError("position.min_valid_pixels must be >= 1")
-        if not 1 <= pos.min_landmarks <= 5:
-            raise ConfigError("position.min_landmarks must be in [1, 5]")
-        if not math.isfinite(pos.max_spread_m) or pos.max_spread_m <= 0:
-            raise ConfigError("position.max_spread_m must be finite and > 0")
+        if not math.isfinite(pos.deadzone_m) or pos.deadzone_m < 0:
+            raise ConfigError("position.deadzone_m must be finite and >= 0")
         if pos.temporal_window < 1:
             raise ConfigError("position.temporal_window must be >= 1")
-        if not math.isfinite(pos.max_depth_skew_s) or pos.max_depth_skew_s <= 0:
-            raise ConfigError("position.max_depth_skew_s must be finite and > 0")
         if not math.isfinite(pos.stale_timeout_s) or pos.stale_timeout_s <= 0:
             raise ConfigError("position.stale_timeout_s must be finite and > 0")
-        for name in ("align_offset_x", "align_offset_y"):
-            value = getattr(pos, name)
-            if not math.isfinite(value) or not -0.5 <= value <= 0.5:
-                raise ConfigError(f"position.{name} must be finite and in [-0.5, 0.5]")
         if pos.min_cutoff <= 0 or pos.d_cutoff <= 0:
             raise ConfigError("position cutoffs must be > 0")
         if pos.beta < 0:
             raise ConfigError("position.beta must be >= 0")
         if not math.isfinite(pos.max_rate_m_s) or pos.max_rate_m_s <= 0:
             raise ConfigError("position.max_rate_m_s must be finite and > 0")
+
+        tag = self.tag
+        if not str(tag.camera).strip():
+            raise ConfigError("tag.camera must not be empty")
+        if c.source == "camera" and str(c.camera) == str(tag.camera):
+            raise ConfigError("tag.camera must differ from capture.camera")
+        if tag.width <= 0 or tag.height <= 0:
+            raise ConfigError("tag.width/height must be > 0")
+        if not math.isfinite(tag.fps) or tag.fps <= 0:
+            raise ConfigError("tag.fps must be finite and > 0")
+        if tag.zero_mode not in ("sample", "fixed"):
+            raise ConfigError("tag.zero_mode must be sample or fixed")
+        if not math.isfinite(tag.zero_distance_m) or not 0.1 <= tag.zero_distance_m <= 5.0:
+            raise ConfigError("tag.zero_distance_m must be in [0.1, 5.0] metres")
+        if not 1.0 < tag.hfov_deg < 170.0:
+            raise ConfigError("tag.hfov_deg must be between 1 and 170")
+        intrinsics = (tag.fx, tag.fy, tag.cx, tag.cy)
+        if any(value is not None for value in intrinsics) and not all(
+            value is not None for value in intrinsics
+        ):
+            raise ConfigError("tag.fx/fy/cx/cy must be either all set or all null")
+        if tag.fx is not None:
+            if tag.fx <= 0 or tag.fy <= 0:
+                raise ConfigError("tag.fx/fy must be > 0")
+            if not 0 <= tag.cx < tag.width or not 0 <= tag.cy < tag.height:
+                raise ConfigError("tag.cx/cy must be inside the configured image")
+        if not tag.family.strip():
+            raise ConfigError("tag.family must not be empty")
+        if tag.tag_id is not None and tag.tag_id < 0:
+            raise ConfigError("tag.tag_id must be >= 0 or null")
+        if not math.isfinite(tag.size_m) or not 0.001 <= tag.size_m <= 2.0:
+            raise ConfigError("tag.size_m must be in [0.001, 2.0] metres")
+        if not math.isfinite(tag.quad_decimate) or tag.quad_decimate < 1.0:
+            raise ConfigError("tag.quad_decimate must be >= 1")
+        if tag.nthreads < 1:
+            raise ConfigError("tag.nthreads must be >= 1")
+        if not math.isfinite(tag.retry_s) or tag.retry_s <= 0:
+            raise ConfigError("tag.retry_s must be finite and > 0")
+        if not math.isfinite(tag.stale_timeout_s) or tag.stale_timeout_s <= 0:
+            raise ConfigError("tag.stale_timeout_s must be finite and > 0")
+        if tag.pivot not in ("palm", "wrist", "forearm"):
+            raise ConfigError("tag.pivot must be one of palm, wrist, forearm")
+        if not math.isfinite(tag.rotation_gain) or tag.rotation_gain <= 0:
+            raise ConfigError("tag.rotation_gain must be finite and > 0")
+        if not 0 <= tag.rotation_deadzone_deg < tag.rotation_max_angle_deg <= 180:
+            raise ConfigError(
+                "tag rotation angles must satisfy 0 <= deadzone < max_angle <= 180"
+            )
+        if not math.isfinite(tag.rotation_smoothing_tau_s) or tag.rotation_smoothing_tau_s < 0:
+            raise ConfigError("tag.rotation_smoothing_tau_s must be finite and >= 0")
+        if not math.isfinite(tag.rotation_max_rate_rad_s) or tag.rotation_max_rate_rad_s <= 0:
+            raise ConfigError("tag.rotation_max_rate_rad_s must be finite and > 0")
         if self.runtime.max_frames < 0:
             raise ConfigError("runtime.max_frames must be >= 0")
 
@@ -494,9 +482,5 @@ def _resolve_relative_paths(cfg: AppConfig, base: Path) -> AppConfig:
         hand_model=absolute(cfg.data.hand_model),
         calibration=absolute(cfg.data.calibration),
     )
-    capture = replace(
-        cfg.capture,
-        video=absolute(cfg.capture.video),
-        depth_sdk=absolute(cfg.capture.depth_sdk),
-    )
+    capture = replace(cfg.capture, video=absolute(cfg.capture.video))
     return replace(cfg, data=data, capture=capture)

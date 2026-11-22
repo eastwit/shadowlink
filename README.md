@@ -1,53 +1,36 @@
 # ShadowLink
 
-**Monocular hand teleoperation of a Shadow Hand in MuJoCo.**
+**Track fingers with a built-in camera and drive the whole Shadow Hand pose with a hand-held AprilTag in MuJoCo.**
 
-ShadowLink reconstructs a human hand from a single RGB camera and retargets its
-continuous pose onto the 20 actuated joints of the Shadow Hand E3M5. The Shadow
-Hand's 120 fingertip taxels are simulated and visualised in real time. There is
-no gesture classifier: joint angles, finger spread, and thumb opposition are
-mapped frame by frame, so the robot follows the operator's motion continuously.
+ShadowLink reconstructs a human hand from a single RGB image and maps continuous
+joint motion onto the Shadow Hand E3M5's 20 actuators. The scene contains 120
+fingertip tactile taxels coloured by contact force. There is no gesture
+classification: every frame computes finger flexion, spread, and thumb
+opposition continuously.
 
-[中文说明](README.zh-CN.md)
+The whole-hand base is controlled by a hand-held AprilTag (36h11 / ID 5 / 57 mm
+by default). An Astra RGB camera watches the tag while the built-in camera keeps
+driving finger perception.
 
 ## Features
 
-- **Two reconstruction backends**
-  - **HaMeR** (recommended): monocular 3D hand reconstruction on the GPU,
-    21 joints and a MANO mesh, crop-space camera lifted back to the full image.
-  - **MediaPipe** (CPU fallback): `hand_world_landmarks` from the Hand Landmarker
-    task; no CUDA or MANO download required.
-- **Continuous retargeting** using palm-plane geometry: MCP/PIP/DIP flexion,
-  finger spread, and thumb opposition. No discrete gestures or presets.
-- **Two-stage asynchronous perception**: MediaPipe detection and HaMeR inference
-  run in separate threads with latest-slot mailboxes, so the render/physics loop
-  never waits for the model.
-- **Stable, configurable control**: One-Euro filtering, rate limiting, a
-  `waiting → tracking → lost` state machine, and a return-to-neutral ramp
-  instead of jumping to zero.
-- **Calibration that persists**: capture a neutral open-hand pose; store it per
-  backend and validate it across processes.
-- **Model-driven actuator layout**: joint names, order, types, and limits are
-  read from the MJCF at startup, then checked. No duplicated constants.
-- **Tactile simulation**: 120 taxels (5 fingers × 6 × 4) with force-dependent
-  blue→red colouring.
-- **Graspable scene**: a free 4 cm ball on a small stand at palm height. Move the
-  hand toward it and close your fingers; contact is physical, and `r` returns the
-  ball to its stand.
-- **Optional phone macro orientation**: a phone running the third-party
-  [phyphox](https://phyphox.org) app adds 3-DOF yaw/pitch/roll to the whole hand
-  while the camera keeps controlling the fingers. The phone's attitude at the
-  zero instant is the world frame, and the hand's anatomical frame is kept
-  identical to the phone's (screen normal ↔ dorsum, top ↔ middle finger,
-  left ↔ hand left), so the hand starts in the phone's real attitude. Toggle
-  with `g`; the hand freezes when follow is off. Works over the LAN with no
-  extra Python packages.
-- **Optional RGBD whole-hand translation**: an Orbbec Astra depth camera
-  measures the palm's physical position and translates the whole hand 1:1
-  relative to the startup zero. The default mapping is anatomy-relative, so
-  moving toward your thumb moves the simulated thumb in any hand pose. Toggle
-  with `p`; works alongside phone orientation and finger retargeting. See
-  [docs/RGBD.md](docs/RGBD.md).
+- **Two finger reconstruction backends**
+  - **HaMeR** (recommended): GPU monocular 3D hand reconstruction.
+  - **MediaPipe** (CPU fallback): uses `hand_world_landmarks`; no CUDA or MANO.
+- **Continuous retargeting** from palm geometry (MCP/PIP/DIP flexion, spread,
+  thumb opposition), not discrete gestures.
+- **Two-stage asynchronous perception**: detection and HaMeR inference run in
+  separate latest-value threads; the physics loop never waits.
+- **AprilTag whole-hand 6-DoF**: a dedicated Astra thread publishes tag pose.
+  Translation and rotation drive the hand base relative to a zero pose; the
+  first detection zeroes automatically. `g`/`p` toggle orientation/translation,
+  `0` re-zeros both. Missing tags freeze the hand instead of snapping back.
+- **Stable control**: One-Euro filtering, quaternion slerp, slew limiting, and a
+  `waiting → tracking → lost` state machine with a rate-limited return.
+- **Persistent calibration** for the finger neutral pose, per backend.
+- **Tactile simulation**: 120 taxels (5 fingers × 6 × 4), blue→red.
+- **Door scene**: a hinged door with a graspable lever handle at palm height.
+  Push or pull the handle to swing the door; `r` closes it again.
 - **Headless-friendly**: `--no-show --no-viewer`, synthetic frame sources, and a
   unit suite that needs no GPU, camera, or weights.
 - **No path hacks**: no `os.chdir`, no `sys.path.insert`, no hard-coded user
@@ -61,10 +44,10 @@ mapped frame by frame, so the robot follows the operator's motion continuously.
 | MuJoCo | 3.16+ |
 | MediaPipe | 0.10.14+ |
 | OpenCV | 4.8+ |
+| AprilTag | `pupil-apriltags` (official AprilTag 3 C library binding, core dependency) |
 | HaMeR backend | PyTorch 2.0–2.5, CUDA optional but strongly recommended |
 | GPU | Any CUDA GPU; measurements below use an RTX 4060 Laptop |
-| Phone (optional) | Android/iOS phone with [phyphox](https://phyphox.org) and Remote Access on the same LAN |
-| RGBD camera (optional) | Orbbec Astra (OpenNI2) plus a UVC colour camera, for whole-hand translation |
+| Cameras | built-in/UVC webcam for fingers + Orbbec Astra RGB for the tag |
 
 Windows 11 and Linux are supported. The MuJoCo viewer and OpenCV preview are
 optional.
@@ -74,28 +57,28 @@ optional.
 ### 1. Clone with the HaMeR submodule
 
 ```bash
-git clone --recurse-submodules <repository-url> ShadowLink
+git clone --recurse-submodules <repo-url> ShadowLink
 cd ShadowLink
 ```
 
-If you already cloned without submodules:
+If already cloned without submodules:
 
 ```bash
 git submodule update --init
 ```
 
-The pinned submodule is HaMeR at `3a01849` (no recursive ViTPose checkout is
-needed for inference).
+The submodule is pinned to HaMeR `3a01849`. Recursive ViTPose initialization is
+not required for inference.
 
-### 2. Create an environment
+### 2. Create the environment
 
 ```bash
 conda create -n shadowlink python=3.10 -y
 conda activate shadowlink
 ```
 
-Install the CUDA build of PyTorch first if you want GPU inference, following the
-[official selector](https://pytorch.org/get-started/locally/). Then:
+For GPU inference, install the CUDA-matched PyTorch build first (see the
+[official selector](https://pytorch.org/get-started/locally/)), then:
 
 ```bash
 pip install -e ".[dev,hamer]"
@@ -103,26 +86,13 @@ pip install -e third_party/hamer --no-deps
 ```
 
 `--no-deps` is intentional: HaMeR's `setup.py` pulls training-only packages
-(detectron2, mmcv) that are not needed for inference, and its dependency pins
-would override the PyTorch build you just installed.
+(detectron2, mmcv, ...) and may overwrite PyTorch.
 
-For CPU/MediaPipe-only use:
+CPU/MediaPipe only:
 
 ```bash
 pip install -e ".[dev]"
 ```
-
-RGBD position control needs the optional `openni` package and a local OpenNI2
-SDK:
-
-```bash
-pip install -e ".[dev,rgbd]"
-```
-
-Phone macro orientation needs no Python extra: install phyphox on the phone and
-enable its Remote Access server (plain HTTP on the local network). See
-[docs/PHONE.md](docs/PHONE.md). For the depth camera and SDK setup, see
-[docs/RGBD.md](docs/RGBD.md).
 
 ### 3. Fetch the models
 
@@ -130,10 +100,10 @@ enable its Remote Access server (plain HTTP on the local network). See
 shadowlink setup-models
 ```
 
-This downloads the HaMeR demo checkpoint/config and the MediaPipe Hand Landmarker
-task into the data directory. It does **not** download MANO.
+This downloads the HaMeR demo checkpoint/config and MediaPipe Hand Landmarker;
+it does **not** download MANO.
 
-MANO is distributed under a non-commercial research licence. Register at
+MANO uses a non-commercial research licence. Register at
 <https://mano.is.tue.mpg.de>, download `MANO_RIGHT.pkl`, and place it at:
 
 ```text
@@ -142,11 +112,7 @@ MANO is distributed under a non-commercial research licence. Register at
 
 The default data directory is `~/.cache/shadowlink` (Linux) or
 `%USERPROFILE%\.cache\shadowlink` (Windows). Override it with `--data-dir` or
-`SHADOWLINK_DATA`. An existing HaMeR `_DATA` directory can be reused directly:
-
-```bash
-shadowlink setup-models --data-dir D:/models/hamer/_DATA --check-only
-```
+`SHADOWLINK_DATA`.
 
 ### 4. Verify
 
@@ -155,16 +121,20 @@ shadowlink check --data-dir D:/models/hamer/_DATA
 shadowlink doctor --data-dir D:/models/hamer/_DATA --strict-models
 ```
 
-`doctor` reports Python/package versions, CUDA, model files, calibration, and
-MJCF/tactile asset integrity.
+`doctor` checks Python/dependency versions, CUDA, model files, calibration, and
+the MJCF/tactile assets.
 
 ## Quick start
 
 ```bash
-# Live camera, HaMeR + MuJoCo viewer
+# Built-in camera + HaMeR + Astra tag + MuJoCo viewer
 shadowlink run --backend hamer --data-dir D:/models/hamer/_DATA
 
-# CPU-only fallback
+# Two-phone setup: IP Webcam for hands + Plugcam for the tag
+shadowlink run --config configs/ipwebcam_plugcam.yaml --backend hamer \
+  --data-dir D:/models/hamer/_DATA
+
+# CPU finger fallback
 shadowlink run --backend mediapipe --data-dir D:/models/hamer/_DATA
 
 # Replay a video without windows
@@ -173,14 +143,25 @@ shadowlink run --source video --camera demo.mp4 --backend hamer \
 
 # No camera: cycle through the 13 keyframe poses
 shadowlink demo
+```
 
-# Add phone attitude control for whole-hand orientation
-shadowlink run --backend hamer --phone phyphox --phone-host 192.0.2.10 \
-  --phone-follow --data-dir D:/models/hamer/_DATA
+Default camera indices:
 
-# Add RGBD whole-hand translation (depth via OpenNI2, colour via camera 1)
-shadowlink run --source rgbd --camera 1 --backend hamer \
-  --depth-sdk D:/sdk/OpenNI2/Redist --data-dir D:/models/hamer/_DATA
+| Index | Device | Role |
+| --- | --- | --- |
+| `0` | Astra Pro HD Camera | tag camera |
+| `1` | built-in HD Webcam | finger camera |
+
+`configs/ipwebcam_plugcam.yaml` uses the current phone setup: IP Webcam at
+`http://192.168.1.109:8080/video` for hands and Plugcam at DirectShow index `1`
+for the tag. Update those two values when the phone IP or enumeration changes.
+
+If Windows enumerates cameras differently, change `capture.camera` /
+`tag.camera` in the config, or pass `--camera` / `--tag-camera`.
+List DirectShow devices:
+
+```bash
+python -c "from pygrabber.dshow_graph import FilterGraph; print(list(enumerate(FilterGraph().get_input_devices())))"
 ```
 
 ### Controls
@@ -188,229 +169,137 @@ shadowlink run --source rgbd --camera 1 --backend hamer \
 | Key | Action |
 | --- | --- |
 | `q` / `Esc` | quit |
-| `c` | capture a neutral pose (hold an open hand still) |
-| `g` | toggle phone macro follow (only shown when a phone source is enabled) |
-| `0` | re-anchor the phone world frame at the current attitude (starts following if frozen) |
-| `p` | toggle RGBD position follow; re-enabling re-zeroes at the current palm |
-| `r` | reset physics, targets, macro orientation, translation, and the grasp ball to the start pose |
+| `c` | capture a finger neutral pose (hold an open hand still) |
+| `g` | toggle tag whole-hand orientation follow |
+| `0` | re-zero both tag position and orientation at the current tag pose |
+| `p` | toggle tag whole-hand translation |
+| `r` | reset physics, targets, tag zero, translation, orientation, and the door |
 
 ### Common options
 
 ```text
---source camera|video|rgbd   --camera INDEX_OR_PATH
---depth-sdk PATH             --no-position
---position-preset front|palm|back
+--source camera|video        --camera INDEX_OR_PATH
+--no-position                --position-preset front|palm|back
 --position-gain FLOAT        --position-deadzone M
---position-max-offset M
---backend hamer|mediapipe    --side any|left|right   (anatomical side)
+--tag-camera INDEX_OR_PATH   --tag-api any|dshow|msmf
+--tag-family tag36h11        --tag-id N
+--tag-size M                 --tag-mirror auto|on|off
+--tag-zero-mode sample|fixed --tag-zero-distance M
+--tag-show / --no-tag-show   --tag-follow
+--backend hamer|mediapipe    --side any|left|right
 --pick largest|center|track  --skip N
 --no-mirror                  --draw skeleton|mesh|none
 --smooth SECONDS             --output RECORDING.mp4
 --no-show --no-viewer        --max-frames N
 --fp16 / --no-fp16           --calibration PATH
---phone none|phyphox         --phone-host HOST[:PORT]
---phone-port PORT            --phone-scan
---phone-follow               --phone-mount back|in_hand|custom
---config FILE
---set section.field=value
+--config FILE                --set section.field=value
 ```
 
-Configuration precedence is **CLI flags / `--set` > `--config` YAML > dataclass
-defaults**. `configs/default.yaml` is kept byte-for-byte equivalent to the
-default `AppConfig` and is locked by a test.
+Priority: **CLI / `--set` > `--config` YAML > dataclass defaults**.
+`configs/default.yaml` mirrors `AppConfig` exactly and is locked by a test.
 
 ## How it works
 
 ```text
-camera/video ──► FramePacket (immutable, mirrored once)
-                     │
-              ┌──────┴───────┐
-              │  detection   │  MediaPipe HandLandmarker (VIDEO mode)
-              │  thread      │  side filter + largest/center/IoU selector
-              └──────┬───────┘
-                     │ latest detection (old frames dropped)
-              ┌──────┴───────┐
-              │  inference   │  HaMeR crop → checkpoint → 21 joints + mesh
-              │  thread      │  (MediaPipe backend reuses world landmarks)
-              └──────┬───────┘
-                     │ latest PerceptionResult (frame_seq + timestamps)
-                     ▼
-   retarget (palm frame → flexion/spread/opposition)
-                     ▼
-   One-Euro filter → slew limit → state machine → 20 actuator targets
-                     │
-phone attitude ─► phyphox HTTP polling ─► latest sample
-                     │                   (optional, separate thread)
-                     ▼
-   `g` toggle → relative rotation → deadzone/gain/clamp → smoothing
-                     ▼
-rgbd depth ─► OpenNI2 thread ─► depth by frame_seq ─► palm back-projection
-                     │                                         │
-                     │                    `p` toggle → relative translation
-                     ▼                                         ▼
-   MuJoCo mocap base orientation + world translation (whole hand)
-                     ▼
-   MuJoCo fixed-step physics + 120 touch sensors + viewer/preview
+built-in camera ──► FramePacket ──► MediaPipe detector ──► HaMeR inference
+                                             │
+                                             ▼
+                              21 joints → flexion/spread/opposition
+                                             ▼
+                     One-Euro → slew limit → 20 actuator targets
+
+Astra RGB ──► AprilTag thread ──► 6-DoF relative zero → pos + orientation
+                                             ▼
+                     ShadowHand.set_macro_pose (whole-hand base)
+                                             ▼
+                     MuJoCo fixed-step physics + 120 taxels + viewer
 ```
 
 Key invariants:
 
-- Frames are frozen dataclasses; the capture buffer is never mutated across
-  threads.
-- Every result carries `frame_seq`, `capture_ts`, and `finished_ts`, so the app
-  can distinguish "no hand in this frame" from "the worker has not produced a
-  result yet".
-- The main loop only reads the newest result; older results are ignored.
-- A perception failure is reported through `WorkerHealth`, logged, and makes the
-  process exit non-zero rather than silently freezing on stale data.
-- Left hands are mirror-canonicalised for retargeting. The Shadow Hand model is
-  right-handed; the left Shadow Hand is not driven in v0.1.
+- Frames are frozen dataclasses; capture buffers are never mutated across threads.
+- Results carry `frame_seq`, `capture_ts`, `finished_ts`; the main loop only uses
+  the newest result.
+- The tag service publishes into an independent latest-value slot; the loop never
+  blocks on its camera or detector, and freezes when the sample goes stale.
+- Left hands are canonicalised for retargeting. The left Shadow Hand is not
+  driven in v0.1.
+- Astra's RGB stream is horizontally mirrored; `tag.mirror: auto` corrects it.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module boundaries and the
-threading model.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module boundaries and
+threading.
 
 ## Calibration
 
-Hold an open hand in front of the camera and press `c` (or run
-`shadowlink calibrate`). The neutral flexion/spread/opposition is saved to
-`%APPDATA%\ShadowLink\calibration.json` on Windows or
-`~/.config/shadowlink/calibration.json` on Linux. Calibration is bound to the
-backend and side that produced it; switching backends asks you to calibrate
-again instead of silently using the wrong zero.
-
-See [docs/CALIBRATION.md](docs/CALIBRATION.md).
-
-## Phone macro orientation
-
-The camera layer keeps doing what it always did: continuous finger retargeting.
-A phone running [phyphox](https://phyphox.org) can additionally rotate the whole
-Shadow Hand in yaw, pitch, and roll. The two inputs are independent, and the
-hand base is driven through a MuJoCo mocap body, so the finger dynamics and
-tactile sensors are unchanged.
-
-1. Install phyphox on the phone and open an experiment that records **Attitude**
-   (the raw-gyroscope fallback also works when the experiment exposes gyroscope
-   and accelerometer buffers).
-2. Enable **Remote Access** and connect the phone and computer to the same
-   network. Note the phone's LAN IP.
-3. Start ShadowLink:
+Face the camera with an open hand and press `c`, or run:
 
 ```bash
-shadowlink run --backend hamer --phone phyphox \
-  --phone-host 192.0.2.10 --phone-follow \
-  --data-dir D:/models/hamer/_DATA
+shadowlink calibrate --backend hamer --data-dir D:/models/hamer/_DATA
 ```
 
-Press `g` to start or stop following. Turning it on takes the phone's current
-attitude as the world frame and aligns the hand to it. Press `0` at any time to
-re-anchor the world frame at the phone's current attitude; the hand is aligned
-to the phone again and subsequent motion is relative to that new zero.
-For headless runs, `--phone-follow` starts following at the first ready sample.
-A stale sample (default 0.35 s) freezes the hand and turns follow off while the
-camera path continues; press `0` after recovery to re-zero and resume.
+The neutral file is stored at `%APPDATA%\ShadowLink\calibration.json` on Windows
+or `~/.config/shadowlink/calibration.json` on Linux. It is tied to the backend
+and hand side.
 
-`shadowlink phone-test --host 192.0.2.10 --seconds 10` prints the connection
-state, sample rate, quaternion, Euler angles, and relative axis-angle.
-`--list` prints the experiment's buffer names and the source that was selected.
-`phone.mount_preset` selects the physical mounting. The default `back` matches
-the wrist strap: phone top toward the fingers, charging port toward the elbow,
-and the back of the phone against the back of the hand, so the screen normal
-coincides with the dorsum, the phone top with the extended middle finger, and
-the phone's left side with the hand's left. Use `--phone-mount in_hand` when
-the phone is held flat in the palm with the screen facing away from the palm;
-the two differ by a 180° rotation about the phone's long axis. `phone.gain`
-scales the motion and `phone.max_angle_deg` is an optional limit (default
-`180`, meaning no clamp). `phone.pivot` selects the rotation centre: `wrist`
-(default), `forearm`, or `palm`. The passive viewer draws an RGB triad at the
-zero hand orientation, and the HUD prints that zero as `p/r/y` Euler angles.
+## AprilTag whole-hand 6-DoF
 
-> **Security:** phyphox Remote Access is unauthenticated plain HTTP. Use it only
-> on a trusted LAN, never forward the port to the internet, and stop Remote
-> Access when you are done. ShadowLink only makes outbound requests; it never
-> listens for phone connections and never persists the phone address.
-
-See [docs/PHONE.md](docs/PHONE.md) for setup, axis tuning, and limitations.
-
-## RGBD whole-hand translation
-
-With `--source rgbd`, the colour camera still drives finger retargeting and the
-depth camera adds the palm's physical position:
-
-```bash
-shadowlink run --source rgbd --camera 1 --backend hamer \
-  --depth-sdk D:/sdk/OpenNI2/Redist --data-dir D:/models/hamer/_DATA
-```
-
-- The first usable palm sample (or pressing `p`) defines the zero; later motion
-  is applied 1:1 in metres. Press `p` again to freeze, then press it once more
-  to re-zero at the new position.
-- The default mapping is **anatomy-relative** (`position.hand_relative: true`):
-  3D landmarks decompose your motion into the observed hand's palmar normal,
-  thumb side, and finger direction. Moving toward your thumb moves the
-  simulated hand toward its thumb; moving toward your middle finger moves it
-  toward its middle finger, regardless of the hand's pose, side, or image
-  mirroring.
-- If the 3D keypoints are unusable, or with `--set position.hand_relative=false`,
-  the static `position.preset` is used: `palm` (default) maps motion toward the
-  camera to world `+z`, `front` is screen-aligned, and `back` is for a hand
-  shown dorsal-side to the camera.
-- Translation is applied to the same mocap base as phone orientation, in world
-  space, so the two controls are independent. `r` resets both.
-- The depth frame is matched to the colour frame by sequence number, not by
-  "latest now", so asynchronous HaMeR inference does not mix landmarks with the
-  wrong depth image.
-- Position sampling uses the detector-stage 2D landmarks as soon as they are
-  available, so the translation keeps updating at detector rate instead of
-  waiting for HaMeR inference (~60 ms).
-- Losing the hand or the depth stream freezes the translation instead of
-  snapping back to zero.
-- Keep the hand between 0.6 m and 1.2 m from the sensor with the palm visible
-  to the camera. `--no-position` keeps the camera open but disables
-  translation.
-
-Verify the hardware first:
-
-```bash
-shadowlink rgbd-check --camera 1 --depth-sdk D:/sdk/OpenNI2/Redist --out check.png
-```
-
-See [docs/RGBD.md](docs/RGBD.md) for the SDK setup, presets, alignment offsets,
-and tuning.
+- Print or display `src/shadowlink/assets/apriltag/tag36h11_id5.png` **without
+  mirroring**.
+- `size.md` and the config default are 57 mm (black-border edge).
+- A separate **AprilTag Detection** window shows the Astra feed, tag outline,
+  coordinate axes, ID, distance, mirror state, and detection rate. Hide it with
+  `--no-tag-show`.
+- The tag camera defaults to DSHOW at 640×480 (~20 FPS). DSHOW is more reliable
+  for Astra than MSMF; `--tag-api msmf` can reach ~30 FPS but may open slowly.
+- Translation zero defaults to the **image center at 1.00 m depth**
+  (`tag.zero_mode: fixed`, `tag.zero_distance_m: 1.0`). Hold the tag near that
+  point for a neutral hand offset. The orientation zero is latched from the
+  **first valid tag** and stays absolute for the session; `g` only toggles
+  following. `p` toggles translation, `0` explicitly re-zeroes orientation and
+  resets fixed translation, and `r` resets everything. Set
+  `tag.zero_mode: sample` to use the first tag position instead.
+- Initial hand pose: **palm down**, middle finger toward the door.
+- Tag axes: **X+** = forward / middle finger, **Y+** = right, **Z+** = palm
+  direction, **Z−** = up. Rotation mapping: **green → roll**, **red → pitch**,
+  **blue → yaw**, so the three axes stay independent.
+- Translation uses the `overhead` preset: tag moving **right** moves the hand
+  toward the door (+world x), and tag moving **closer** to the overhead camera
+  moves the hand up (+world z).
+- There is no spatial clamp: the hand can follow the tag arbitrarily far from
+  the zero. If the tag pose is lost for 0.5 s, both position and orientation
+  freeze in place instead of returning to zero.
+- Hold the tag roughly 0.5–1.2 m from the Astra in even light, near the cyan
+  center/1 m guide. See
+  [docs/APRILTAG.md](docs/APRILTAG.md) for the printable asset, axis mapping,
+  intrinsics, and troubleshooting.
 
 ## Performance
 
-Indicative numbers on an RTX 4060 Laptop, 1200×1799 video source, 30 frames:
+RTX 4060 Laptop, 1200×1799 video source, 30 reference frames:
 
 | Metric | p50 |
 | --- | --- |
 | MediaPipe detection | 47 ms |
 | HaMeR inference (fp16) | 62.5 ms |
-| Observation age at consumption | ~180 ms |
+| Observation age at consumption | about 180 ms |
 | Main loop | 26.9 fps |
 
-Detection and inference overlap across frames; the physics loop advances by
-wall-clock time independently. Use `--skip 2` on slower machines, or
-`--backend mediapipe` to drop the GPU model entirely. Actual numbers depend on
-resolution, crop size, and thermal state. `--no-fp16` was not faster on this GPU.
+Detection and inference overlap across frames; the physics loop advances by wall
+clock. On slower machines use `--skip 2` or `--backend mediapipe`.
 
 ## Offline tools
 
 ```bash
-# Retarget one image and render the resulting Shadow Hand pose
 shadowlink render-pose --image hand.jpg --out pose.png --backend hamer \
   --data-dir D:/models/hamer/_DATA
-
-# Verify the checked-in tactile XML is reproducible from the meshes
 shadowlink generate-tactile --check
-
-# Regenerate it after changing fingertip geometry
 shadowlink generate-tactile
 ```
 
 ## Development
 
 ```bash
-pytest -q                       # no GPU, weights, or camera required
+pytest -q
 pytest -m "not hamer and not mediapipe" -q
 ruff check src tests
 ruff format --check src tests
@@ -419,65 +308,51 @@ ruff format --check src tests
 Opt-in integration tests:
 
 ```bash
-# HaMeR checkpoint + MediaPipe + one image
 SHADOWLINK_TEST_DATA=D:/models/hamer/_DATA \
 SHADOWLINK_TEST_IMAGE=example_data/test5.jpg \
 pytest -m hamer -q
 
-# MediaPipe only
 SHADOWLINK_TEST_HAND_MODEL=D:/models/hamer/_DATA/mediapipe/hand_landmarker.task \
 SHADOWLINK_TEST_IMAGE=example_data/test5.jpg \
 pytest -m mediapipe -q
-
-# Real phone running phyphox
-SHADOWLINK_TEST_PHONE=1 SHADOWLINK_TEST_PHONE_HOST=192.0.2.10 pytest -m phone -q
-
-# Real Astra/OpenNI2 depth camera
-SHADOWLINK_TEST_RGBD=1 SHADOWLINK_TEST_DEPTH_SDK=D:/sdk/OpenNI2/Redist \
-pytest -m rgbd -q
 ```
 
-`tests/test_no_path_hacks.py` enforces that the installed package never changes
-the working directory, modifies `sys.path`, or embeds user-specific paths.
+`tests/test_no_path_hacks.py` enforces the absence of `os.chdir`, `sys.path`
+modifications, and user absolute paths.
 
-Layout:
+Directory layout:
 
 ```text
 src/shadowlink/
-├── capture.py            camera/video sources, mirroring, synthetic source
+├── capture.py            camera/video sources, mirroring, synthetic frames
 ├── config.py             dataclass config, YAML, dotted overrides
 ├── paths.py              package assets, data dir, models, calibration
 ├── types.py              immutable frames/detections/observations
 ├── app.py                the only orchestrator
 ├── cli.py                argparse entry point
 ├── math3d.py             NumPy-only quaternion helpers
-├── phone/                phyphox HTTP client, attitude fallback, service
 ├── perception/           MediaPipe detector, HaMeR backend, worker, selector
-├── position/             palm depth sampling, frame association, translation
-├── retarget/             geometry, mapping, smoothing, macro pose, calibration
-├── rgbd/                 OpenNI2 depth service, intrinsics, RGBD frame source
+├── tag/                  AprilTag camera thread and relative 6-DoF controller
+├── retarget/             geometry, mapping, smoothing, calibration
 ├── sim/                  MJCF loading, Shadow Hand, fixed-step clock, viewer
 ├── ui/                   overlay, telemetry, OpenCV window/recorder
-├── tools/                setup-models, doctor, tactile generator,
-│                         phone-test, render-pose, rgbd-check
+├── tools/                setup-models, doctor, tactile generator, render-pose
 └── assets/shadow_hand/   MJCF, OBJ meshes, tactile XML, original licences
 ```
 
-See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common setup
-problems.
+See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues.
 
 ## Licence and attribution
 
-ShadowLink's own code is MIT licensed. HaMeR is an MIT-licensed submodule;
-Shadow Hand assets are Apache-2.0 from MuJoCo Menagerie / Shadow Robot; MediaPipe
-is Apache-2.0. MANO and HaMeR checkpoints are **not** redistributed and remain
-subject to their original licences. phyphox is a third-party app that is not
-bundled with this project; ShadowLink only reads its public HTTP interface. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+ShadowLink's own code is MIT. HaMeR is a MIT submodule; the Shadow Hand assets
+come from MuJoCo Menagerie / Shadow Robot (Apache-2.0); MediaPipe is Apache-2.0;
+AprilTag is BSD-2-Clause through the `pupil-apriltags` binding. MANO and the
+HaMeR checkpoint are **not** redistributed and remain under their own licences.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Citation
 
-If you use the HaMeR backend, please cite the original work:
+When using the HaMeR backend, cite:
 
 ```bibtex
 @inproceedings{pavlakos2023reconstructing,

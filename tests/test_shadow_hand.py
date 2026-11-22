@@ -210,18 +210,16 @@ def test_macro_pose_reset_and_validation(hand):
     np.testing.assert_allclose(hand.macro_pivot_world, pivot, atol=1e-12)
 
 
-def test_reset_free_bodies_restores_the_grasp_ball(hand):
+def test_reset_free_bodies_restores_the_door(hand):
     import mujoco
 
-    ball = mujoco.mj_name2id(hand.model, mujoco.mjtObj.mjOBJ_BODY, "ball")
-    joint = int(hand.model.body_jntadr[ball])
+    joint = mujoco.mj_name2id(hand.model, mujoco.mjtObj.mjOBJ_JOINT, "door_hinge")
     qpos_adr = int(hand.model.jnt_qposadr[joint])
     dof_adr = int(hand.model.jnt_dofadr[joint])
-    start = hand.model.qpos0[qpos_adr : qpos_adr + 7].copy()
 
-    hand.data.qpos[qpos_adr : qpos_adr + 3] = (0.9, 0.5, -0.2)
-    hand.data.qvel[dof_adr : dof_adr + 6] = 1.0
+    hand.data.qpos[qpos_adr] = 0.8
+    hand.data.qvel[dof_adr] = 1.0
     hand.reset_free_bodies()
 
-    np.testing.assert_allclose(hand.data.qpos[qpos_adr : qpos_adr + 7], start)
-    np.testing.assert_allclose(hand.data.qvel[dof_adr : dof_adr + 6], 0.0)
+    assert hand.data.qpos[qpos_adr] == pytest.approx(0.0)
+    assert hand.data.qvel[dof_adr] == pytest.approx(0.0)

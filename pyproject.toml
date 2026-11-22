@@ -24,6 +24,7 @@ dependencies = [
   "mujoco>=3.16",
   "mediapipe>=0.10.14",
   "PyYAML>=6.0",
+  "pupil-apriltags>=1.0.4",
 ]
 
 [project.optional-dependencies]
@@ -40,9 +41,6 @@ hamer = [
   "smplx>=0.1.28,<0.2",
   "pyrender>=0.1.45",
   "chumpy>=0.70",
-]
-rgbd = [
-  "openni>=2.3,<3",
 ]
 dev = [
   "pytest>=7.4",
@@ -64,6 +62,8 @@ shadowlink = [
   "assets/shadow_hand/LICENSE",
   "assets/shadow_hand/assets/*.obj",
   "assets/shadow_hand/tactile/*.xml",
+  "assets/apriltag/*.png",
+  "assets/apriltag/*.md",
 ]
 
 [tool.pytest.ini_options]
@@ -73,8 +73,6 @@ markers = [
   "hamer: requires the HaMeR checkpoint and torch",
   "mediapipe: requires the MediaPipe hand_landmarker.task model",
   "gpu: requires a CUDA device",
-  "phone: requires a physical phone running phyphox",
-  "rgbd: requires the Astra/OpenNI2 depth camera",
   "slow: slow integration test",
 ]
 

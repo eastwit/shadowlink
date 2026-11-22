@@ -56,8 +56,12 @@ class OpenCVFrameSource:
         self._clock = clock
         self._seq = 0
         self._mirror = bool(cfg.mirror)
+        self._target = target
+        self._api = _api_preference(cfg.api)
+        self._network = isinstance(target, str) and "://" in target
+        self._closed = False
         try:
-            self._cap = cv2.VideoCapture(target, _api_preference(cfg.api))
+            self._cap = cv2.VideoCapture(target, self._api)
         except cv2.error as exc:
             raise CaptureError(f"cannot open frame source {target!r}: {exc}") from exc
         if not self._cap.isOpened():
@@ -65,16 +69,7 @@ class OpenCVFrameSource:
             raise CaptureError(
                 f"cannot open frame source {target!r} (source={cfg.source}, api={cfg.api})"
             )
-
-        if cfg.width > 0:
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(cfg.width))
-        if cfg.height > 0:
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(cfg.height))
-        if cfg.fps > 0:
-            self._cap.set(cv2.CAP_PROP_FPS, float(cfg.fps))
-        if cfg.buffer_size > 0:
-            # Not every backend honors this; failure is harmless.
-            self._cap.set(cv2.CAP_PROP_BUFFERSIZE, float(cfg.buffer_size))
+        self._configure(self._cap)
         actual = self.size
         log.info(
             "opened %s (%sx%s, api=%s, mirror=%s)",
@@ -85,10 +80,44 @@ class OpenCVFrameSource:
             self._mirror,
         )
 
+    def _configure(self, cap: cv2.VideoCapture) -> None:
+        if self.cfg.width > 0:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.cfg.width))
+        if self.cfg.height > 0:
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.cfg.height))
+        if self.cfg.fps > 0:
+            cap.set(cv2.CAP_PROP_FPS, float(self.cfg.fps))
+        if self.cfg.buffer_size > 0:
+            # Not every backend honors this; failure is harmless.
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, float(self.cfg.buffer_size))
+
+    def _reconnect(self) -> cv2.VideoCapture | None:
+        """Re-open a dropped network stream (e.g. an IP Webcam phone)."""
+        for _ in range(50):
+            if self._closed:
+                return None
+            time.sleep(0.1)
+            try:
+                cap = cv2.VideoCapture(self._target, self._api)
+            except cv2.error:
+                continue
+            if cap.isOpened():
+                self._configure(cap)
+                log.warning("reconnected frame source %s", self._target)
+                return cap
+            cap.release()
+        return None
+
     def read(self) -> FramePacket | None:
         if self._cap is None:
             return None
         ok, frame = self._cap.read()
+        if (not ok or frame is None) and self._network and not self._closed:
+            self._cap.release()
+            self._cap = self._reconnect()
+            if self._cap is None:
+                return None
+            ok, frame = self._cap.read()
         if not ok or frame is None:
             return None
         if self._mirror:
@@ -120,6 +149,7 @@ class OpenCVFrameSource:
         return (width, height) if width > 0 and height > 0 else None
 
     def close(self) -> None:
+        self._closed = True
         cap = getattr(self, "_cap", None)
         if cap is not None:
             cap.release()
@@ -212,8 +242,4 @@ class SyntheticFrameSource:
 
 
 def open_source(cfg: CaptureConfig, clock: Callable[[], float] = time.monotonic):
-    if cfg.source == "rgbd":
-        from shadowlink.rgbd.source import RGBDFrameSource
-
-        return RGBDFrameSource(cfg, clock=clock)
     return OpenCVFrameSource(cfg, clock=clock)

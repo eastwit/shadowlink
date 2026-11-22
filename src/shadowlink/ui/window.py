@@ -23,17 +23,31 @@ class PreviewWindow:
     touch OpenCV UI.
     """
 
-    def __init__(self, name: str = "ShadowLink", *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        name: str = "ShadowLink",
+        *,
+        enabled: bool = True,
+        resizable: bool = False,
+    ) -> None:
         self.name = name
         self.enabled = enabled
+        self.resizable = resizable
         self._open = False
 
-    def show(self, image: np.ndarray) -> int | None:
+    def show(self, image: np.ndarray, *, wait_key: bool = True) -> int | None:
         if not self.enabled:
             return None
         if not self._open:
             try:
-                cv2.namedWindow(self.name, cv2.WINDOW_AUTOSIZE)
+                if self.resizable:
+                    cv2.namedWindow(self.name, cv2.WINDOW_NORMAL)
+                    height, width = image.shape[:2]
+                    display_width = min(int(width), 960)
+                    display_height = max(1, int(round(display_width * height / width)))
+                    cv2.resizeWindow(self.name, display_width, display_height)
+                else:
+                    cv2.namedWindow(self.name, cv2.WINDOW_AUTOSIZE)
             except cv2.error as exc:
                 raise UIError(f"cannot create preview window: {exc}") from exc
             self._open = True
@@ -42,6 +56,8 @@ class PreviewWindow:
         except cv2.error as exc:
             self.enabled = False
             raise UIError(f"cannot show preview: {exc}") from exc
+        if not wait_key:
+            return None
         key = cv2.waitKey(1) & 0xFF
         return None if key == 255 else key
 

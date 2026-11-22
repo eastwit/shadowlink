@@ -1,37 +1,28 @@
-# ShadowLink default configuration.
-# Every key here mirrors a dataclass field in src/shadowlink/config.py.
-# Override from the command line with e.g. --set retarget.flex_gain=1.2
-
+# ShadowLink configuration: built-in webcam for fingers + Astra AprilTag 6-DoF.
+# Every key mirrors a dataclass field in src/shadowlink/config.py.
+# Override with: --set tag.rotation_gain=1.2
+# Camera indices below match this workstation; adjust if Windows enumerates
+# them differently.
 capture:
-  source: camera          # camera | video | rgbd
-  camera: "0"             # camera index, file path, or stream URL (RGBD color index)
-  video: null             # used when source: video
-  width: 0                # 0 = native
+  source: camera
+  camera: '1'
+  video: null
+  width: 0
   height: 0
-  mirror: true            # mirror once before perception and display
-  api: any                # any | dshow | msmf
+  mirror: true
+  api: any
   buffer_size: 1
-  fps: 0.0                # 0 = source frame rate
-  depth_sdk: null         # directory containing OpenNI2.dll (or set OPENNI2_REDIST)
-  depth_width: 640
-  depth_height: 480
-  depth_fps: 30
-  depth_fx: null          # null = derive from the device FOV
-  depth_fy: null
-  depth_cx: null
-  depth_cy: null
-
+  fps: 0.0
 perception:
-  backend: hamer          # hamer | mediapipe
-  side: any               # any | left | right (anatomical)
-  pick: track             # largest | center | track
-  skip: 1                 # run perception every Nth frame
+  backend: hamer
+  side: any
+  pick: track
+  skip: 1
   max_age_s: 0.5
   min_detection_confidence: 0.3
   rescale_factor: 2.0
   fp16: true
-  pipeline: two_stage     # single | two_stage
-
+  pipeline: two_stage
 retarget:
   flex_gain: 1.0
   distal_gain: 1.0
@@ -42,9 +33,8 @@ retarget:
   spread_deadzone: 0.03
   spread_clip: 0.45
   thumb_opp_gain: 0.0
-
 smoothing:
-  kind: one_euro          # none | exponential | one_euro
+  kind: one_euro
   tau: 0.055
   min_cutoff: 1.0
   beta: 0.05
@@ -53,76 +43,70 @@ smoothing:
   return_rate_rad_s: 6.0
   lost_timeout_s: 0.5
   hold_s: 0.15
-
 sim:
   max_catchup_s: 0.05
   reset_stall_s: 0.5
   viewer: true
   touch_force_scale: 1.0
   start_pose: open hand
-
 ui:
   show: true
-  draw: skeleton          # skeleton | mesh | none
+  draw: skeleton
   record: null
   window_name: ShadowLink
-
 data:
-  data_dir: null          # defaults to SHADOWLINK_DATA or ~/.cache/shadowlink
-  checkpoint: null        # defaults to <data_dir>/hamer_ckpts/checkpoints/hamer.ckpt
-  hand_model: null        # defaults to <data_dir>/mediapipe/hand_landmarker.task
-  calibration: null       # defaults to the per-user config directory
-
-phone:
-  source: none            # none | phyphox
-  host: null              # phone IP or hostname; required for phyphox unless auto_discover
-  port: 8080              # phyphox Remote Access port
-  poll_hz: 30.0
-  timeout_s: 1.0          # one HTTP request
-  retry_s: 1.5            # delay after a connection failure
-  auto_start: true        # start a paused experiment on the phone
-  auto_discover: false    # opt-in /24 scan on the local network
-  auto_follow: false      # follow as soon as a ready sample arrives
-  pivot: wrist            # palm | wrist | forearm
-  stale_timeout_s: 0.35
-  mount_preset: back      # back (strap) | in_hand (held screen-up) | custom
-  mount_w: 0.0            # custom phone body -> hand base rotation
-  mount_x: 0.7071068      # default: charging port -> elbow, top -> fingers,
-  mount_y: 0.0            # screen away from the back of the hand
-  mount_z: -0.7071068
-  gain: 1.0
-  deadzone_deg: 1.5
-  max_angle_deg: 180.0    # 180 = no clamp on the relative rotation
-  smoothing_tau_s: 0.06
-  max_rate_rad_s: 6.0
-
+  data_dir: null
+  checkpoint: null
+  hand_model: null
+  calibration: null
 position:
-  enabled: true           # only takes effect when capture.source = rgbd
-  preset: palm            # fallback when 3D landmarks are unavailable
-  hand_relative: true     # follow thumb / middle-finger directions in any pose
-  invert_x: false         # flip the corresponding world axis
+  enabled: true
+  preset: overhead
+  invert_x: false
   invert_y: false
   invert_z: false
-  gain: 1.0               # 1.0 = relative 1:1
+  gain: 1.0
   deadzone_m: 0.01
-  max_offset_m: 0.25
-  min_depth_mm: 150.0
-  max_depth_mm: 1500.0
-  sample_radius_px: 5
-  min_valid_pixels: 8
-  min_landmarks: 3
-  max_spread_m: 0.12
   temporal_window: 3
-  max_depth_skew_s: 0.15
   stale_timeout_s: 0.5
   auto_zero: true
-  align_offset_x: 0.0     # normalized color->depth alignment trim
-  align_offset_y: 0.0
-  min_cutoff: 1.0
-  beta: 0.1
+  min_cutoff: 1.2
+  beta: 1.5
   d_cutoff: 1.0
   max_rate_m_s: 0.8
-
+tag:
+  camera: '0'
+  api: dshow
+  width: 640
+  height: 480
+  fps: 30.0
+  mirror: auto
+  show: true
+  zero_mode: fixed
+  zero_distance_m: 1.0
+  hfov_deg: 60.0
+  fx: null
+  fy: null
+  cx: null
+  cy: null
+  family: tag36h11
+  tag_id: 5
+  size_m: 0.057
+  quad_decimate: 1.0
+  refine_edges: true
+  nthreads: 4
+  retry_s: 1.0
+  stale_timeout_s: 0.5
+  auto_follow: true
+  pivot: wrist
+  rotation_gain: 1.0
+  rotation_deadzone_deg: 1.5
+  rotation_max_angle_deg: 180.0
+  rotation_smoothing_tau_s: 0.06
+  rotation_max_rate_rad_s: 6.0
+  rotation_invert_x: false
+  rotation_invert_y: false
+  rotation_invert_z: false
 runtime:
   max_frames: 0
   debug: false

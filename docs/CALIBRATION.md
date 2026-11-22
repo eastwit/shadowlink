@@ -82,19 +82,15 @@ The calibration is bound to the backend that produced it. If a file says
 warning; calibrate again rather than mixing camera conventions. If `--side` is
 explicit and the stored side differs, the app logs a warning.
 
-## Phone orientation needs no calibration file
+## Tag pose needs no calibration file
 
-`calibration.json` only describes the camera-neutral finger pose. Phone
-orientation is relative: pressing `g` (or `0` while following) records the
-current phone attitude as the zero, so no per-device calibration is stored.
+`calibration.json` only describes the camera-neutral finger pose. Tag control is
+relative: the first detected tag pose (or `0`) records the tag position and the
+current hand orientation as the zero, so no per-device tag calibration is stored.
 Press `0` at any time to adopt a new zero without changing the visible hand
-pose. If the phone is mounted at an angle relative to the hand, adjust
-`phone.mount_w/x/y/z` in the configuration; this is a fixed rotation, not a
-learned file. The `back` mount preset already matches the recommended strap
-(top toward the fingers, charging port toward the elbow, screen outward from the
-back of the hand); use `in_hand` when holding the phone flat in the palm, or
-`custom` with `phone.mount_*` for any other mounting. See
-[PHONE.md](PHONE.md) for the axis-tuning workflow.
+pose. Rotation axis signs and gain are configuration values
+(`tag.rotation_invert_x/y/z`, `tag.rotation_gain`), not a learned file. See
+[APRILTAG.md](APRILTAG.md).
 
 ## Why backend-bound?
 

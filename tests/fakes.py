@@ -10,7 +10,6 @@ import numpy as np
 
 from shadowlink.perception.base import WorkerHealth
 from shadowlink.types import (
-    DepthIntrinsics,
     FramePacket,
     HandDetection,
     HandObservation,
@@ -45,9 +44,6 @@ class FakeSource:
         fps: float = 30.0,
         clock: Callable[[], float] = time.monotonic,
         mirrored: bool = False,
-        depth_mm: int | None = None,
-        depth_size: tuple[int, int] | None = None,
-        depth_factory: Callable[[int], np.ndarray] | None = None,
     ) -> None:
         self.total = int(frames)
         self.width_px = int(width)
@@ -57,44 +53,18 @@ class FakeSource:
         self.mirrored = bool(mirrored)
         self._seq = 0
         self.closed = False
-        self._depth_factory = depth_factory
-        self._depth: np.ndarray | None = None
-        self._depth_intrinsics: DepthIntrinsics | None = None
-        if depth_mm is not None or depth_factory is not None:
-            depth_width, depth_height = depth_size or (self.width_px, self.height_px)
-            self._depth_intrinsics = DepthIntrinsics(
-                fx=0.9 * depth_width,
-                fy=0.9 * depth_height,
-                cx=(depth_width - 1) / 2.0,
-                cy=(depth_height - 1) / 2.0,
-                width=depth_width,
-                height=depth_height,
-            )
-            if depth_factory is None:
-                self._depth = np.full((depth_height, depth_width), int(depth_mm), dtype=np.uint16)
 
     def read(self) -> FramePacket | None:
         if self.closed or self._seq >= self.total:
             return None
         image = np.zeros((self.height_px, self.width_px, 3), dtype=np.uint8)
         now = self._clock()
-        depth = self._depth
-        if self._depth_factory is not None:
-            depth = np.asarray(self._depth_factory(self._seq), dtype=np.uint16)
-        depth_fields = {}
-        if depth is not None and self._depth_intrinsics is not None:
-            depth_fields = {
-                "depth_mm": depth,
-                "depth_intrinsics": self._depth_intrinsics,
-                "depth_ts": now,
-            }
         packet = FramePacket(
             seq=self._seq,
             capture_ts=now,
             image_bgr=image,
             mirrored=self.mirrored,
             source_fps=self._fps,
-            **depth_fields,
         )
         self._seq += 1
         return packet

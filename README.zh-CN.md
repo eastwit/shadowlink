@@ -1,36 +1,29 @@
 # ShadowLink
 
-**用单目 RGB 摄像头连续遥操作 MuJoCo 中的 Shadow Hand。**
+**用内置摄像头识别手指，用手持 AprilTag 控制整手位置和朝向，在 MuJoCo 中遥操作 Shadow Hand。**
 
-ShadowLink 从单张图像重建人手姿态，并把连续的关节运动映射到 Shadow Hand E3M5
+ShadowLink 从单张 RGB 图像重建人手姿态，并把连续的关节运动映射到 Shadow Hand E3M5
 的 20 个执行器上。仿真中包含 120 个指腹触觉单元，并实时用颜色显示接触力。
-项目**不做手势分类**：每帧都根据关节弯曲、手指张开和拇指对掌连续计算目标，
-因此机器人会跟随操作者的实际运动，而不是在预设手势之间切换。
+项目**不做手势分类**：每帧都根据关节弯曲、手指张开和拇指对掌连续计算目标。
 
-[English](README.md)
+整手基座使用一个手持 AprilTag（默认 36h11 / ID 5 / 57 mm）。Astra 彩色相机
+跟踪 tag，内置摄像头继续识别手指；tag 的位置和姿态相对于零点驱动整只手。
 
 ## 功能
 
-- **两种重建后端**
-  - **HaMeR**（推荐）：GPU 上的单目 3D 手部重建，输出 21 个关节和 MANO 网格，
-    并把裁剪空间的相机参数还原到整幅图像。
-  - **MediaPipe**（CPU 后备）：使用 Hand Landmarker 的 `hand_world_landmarks`，
-    不需要 CUDA 或 MANO。
-- **连续重定向**：基于掌面几何计算 MCP/PIP/DIP 弯曲、手指张开和拇指对掌，
-  不使用离散手势或预设。
-- **两阶段异步感知**：MediaPipe 检测与 HaMeR 推理分别在独立线程中运行，
-  每个阶段只保留最新一帧，渲染和物理循环从不等待模型。
-- **稳定、可配置的控制**：One-Euro 滤波、速度限幅、`waiting → tracking → lost`
-  状态机，以及失手后按速度回到中位，而不是瞬间跳到 0。
+- **两种手指重建后端**
+  - **HaMeR**（推荐）：GPU 上的单目 3D 手部重建。
+  - **MediaPipe**（CPU 后备）：使用 `hand_world_landmarks`，不需要 CUDA 或 MANO。
+- **连续重定向**：基于掌面几何计算 MCP/PIP/DIP 弯曲、手指张开和拇指对掌。
+- **两阶段异步感知**：检测与 HaMeR 推理分别在独立线程中运行，物理循环不等待模型。
+- **AprilTag 整手 6DoF**：独立 Astra 相机线程；tag 平移和旋转共同驱动整手基座，
+  首次检测自动对零，`g`/`p` 分别开关朝向/平移，`0` 重新对零。tag 丢失后冻结。
+- **稳定控制**：One-Euro 滤波、四元数 slerp、速度限幅、`waiting → tracking → lost`
+  状态机，以及失手后按速度回到中位。
 - **可持久化的校准**：采集张开手的零点姿态，按后端保存并在进程重启后校验。
-- **从模型读取执行器布局**：关节名称、顺序、类型和限位全部来自 MJCF，
-  启动时校验，不再维护重复常量。
 - **触觉仿真**：120 个触觉点（5 指 × 6 × 4），按力大小从蓝色渐变到红色。
-- **可选手机宏观姿态**：运行第三方 [phyphox](https://phyphox.org) App 的手机
-  为整只手增加 yaw/pitch/roll 三个自由度，摄像头继续控制手指。手机在零点时刻
-  的姿态即世界参考，机械手与手机的三组解剖方向完全对齐（屏幕法向 ↔ 手背法向、
-  顶部 ↔ 中指、左侧 ↔ 手左侧），因此机械手的初始姿态与手机一致。按 `g` 切换
-  跟随，关闭时冻结当前朝向。通过局域网工作，不需要额外 Python 依赖。
+- **门场景**：一扇带可抓握门把手的铰链门，位置在手掌高度；推/拉把手可以开门，
+  按 `r` 复位关闭。
 - **适合无头环境**：`--no-show --no-viewer`、合成帧源，以及不需要 GPU、
   摄像头或权重的单元测试。
 - **无路径 hack**：不使用 `os.chdir`、`sys.path.insert`，不写死用户目录，
@@ -44,9 +37,10 @@ ShadowLink 从单张图像重建人手姿态，并把连续的关节运动映射
 | MuJoCo | 3.16+ |
 | MediaPipe | 0.10.14+ |
 | OpenCV | 4.8+ |
+| AprilTag | `pupil-apriltags`（官方 AprilTag 3 C 库绑定，随基础依赖安装） |
 | HaMeR 后端 | PyTorch 2.0–2.5，建议使用 CUDA |
 | GPU | 任意 CUDA GPU；下文数据来自 RTX 4060 Laptop |
-| 手机（可选） | 安装 [phyphox](https://phyphox.org) 并开启 Remote Access，与电脑同一局域网 |
+| 摄像头 | 内置/普通 UVC 摄像头（手指） + Orbbec Astra 彩色流（tag） |
 
 支持 Windows 11 和 Linux。MuJoCo viewer 与 OpenCV 预览均可关闭。
 
@@ -92,9 +86,6 @@ mmcv 等包，并可能覆盖刚安装的 PyTorch 版本。
 pip install -e ".[dev]"
 ```
 
-手机宏观姿态不需要额外 Python 包：在手机上安装 phyphox 并开启 Remote Access
-（局域网明文 HTTP）即可。详见 [docs/PHONE.md](docs/PHONE.md)。
-
 ### 3. 获取模型
 
 ```bash
@@ -113,11 +104,7 @@ MANO 采用非商业研究许可。请前往 <https://mano.is.tue.mpg.de> 注册
 
 默认数据目录为 `~/.cache/shadowlink`（Linux）或
 `%USERPROFILE%\.cache\shadowlink`（Windows）。可用 `--data-dir` 或
-`SHADOWLINK_DATA` 覆盖。已有的 HaMeR `_DATA` 目录可以直接复用：
-
-```bash
-shadowlink setup-models --data-dir D:/models/hamer/_DATA --check-only
-```
+`SHADOWLINK_DATA` 覆盖。
 
 ### 4. 验证
 
@@ -131,10 +118,14 @@ shadowlink doctor --data-dir D:/models/hamer/_DATA --strict-models
 ## 快速开始
 
 ```bash
-# 摄像头 + HaMeR + MuJoCo viewer
+# 内置摄像头 + HaMeR + Astra tag + MuJoCo viewer
 shadowlink run --backend hamer --data-dir D:/models/hamer/_DATA
 
-# 纯 CPU 后备
+# 双手机：IP Webcam 做手势 + Plugcam 做 tag
+shadowlink run --config configs/ipwebcam_plugcam.yaml --backend hamer \
+  --data-dir D:/models/hamer/_DATA
+
+# 纯 CPU 手指后备
 shadowlink run --backend mediapipe --data-dir D:/models/hamer/_DATA
 
 # 回放视频，不打开任何窗口
@@ -143,10 +134,24 @@ shadowlink run --source video --camera demo.mp4 --backend hamer \
 
 # 无摄像头：循环展示 13 个关键帧姿态
 shadowlink demo
+```
 
-# 用手机姿态控制整手朝向
-shadowlink run --backend hamer --phone phyphox --phone-host 192.0.2.10 \
-  --phone-follow --data-dir D:/models/hamer/_DATA
+默认相机索引：
+
+| 索引 | 设备 | 角色 |
+| --- | --- | --- |
+| `0` | Astra Pro HD Camera | tag 相机 |
+| `1` | 内置 HD Webcam | 手指相机 |
+
+`configs/ipwebcam_plugcam.yaml` 是当前双手机配置：IP Webcam
+`http://192.168.1.109:8080/video` 做手势，Plugcam 使用 DirectShow 索引 `1`
+做 tag。手机 IP 或相机索引变化时改这两个值即可。
+
+如果 Windows 顺序不同，修改配置文件里的 `capture.camera` / `tag.camera`，
+或使用 `--camera` / `--tag-camera`。查看设备列表：
+
+```bash
+python -c "from pygrabber.dshow_graph import FilterGraph; print(list(enumerate(FilterGraph().get_input_devices())))"
 ```
 
 ### 按键
@@ -154,26 +159,30 @@ shadowlink run --backend hamer --phone phyphox --phone-host 192.0.2.10 \
 | 按键 | 作用 |
 | --- | --- |
 | `q` / `Esc` | 退出 |
-| `c` | 采集零点姿态（保持张开手不动） |
-| `g` | 切换手机宏观跟随（仅在启用手机姿态源时显示） |
-| `0` | 以当前手机姿态重新定义世界参考（冻结时同时开始跟随） |
-| `r` | 重置物理状态、目标以及宏观朝向到起始姿态 |
+| `c` | 采集手指零点姿态（保持张开手不动） |
+| `g` | 开关 tag 整手朝向跟随 |
+| `0` | 以当前 tag 位姿重新定义位置和朝向零点 |
+| `p` | 开关 tag 整手平移 |
+| `r` | 重置物理状态、目标、tag 零点、平移、朝向和门 |
 
 ### 常用参数
 
 ```text
 --source camera|video        --camera 索引或路径
---backend hamer|mediapipe    --side any|left|right   （真实左右手）
+--no-position                --position-preset front|palm|back
+--position-gain FLOAT        --position-deadzone M
+--tag-camera 索引/路径        --tag-api any|dshow|msmf
+--tag-family tag36h11        --tag-id N
+--tag-size M                 --tag-mirror auto|on|off
+--tag-zero-mode sample|fixed --tag-zero-distance M
+--tag-show / --no-tag-show   --tag-follow
+--backend hamer|mediapipe    --side any|left|right
 --pick largest|center|track  --skip N
 --no-mirror                  --draw skeleton|mesh|none
 --smooth 秒                  --output 录像.mp4
 --no-show --no-viewer        --max-frames N
 --fp16 / --no-fp16           --calibration 路径
---phone none|phyphox         --phone-host HOST[:PORT]
---phone-port PORT            --phone-scan
---phone-follow               --phone-mount back|in_hand|custom
---config 文件
---set section.field=value
+--config 文件                --set section.field=value
 ```
 
 优先级：**CLI 参数 / `--set` > `--config` YAML > dataclass 默认值**。
@@ -182,42 +191,27 @@ shadowlink run --backend hamer --phone phyphox --phone-host 192.0.2.10 \
 ## 工作原理
 
 ```text
-摄像头/视频 ──► FramePacket（不可变，只镜像一次）
-                     │
-              ┌──────┴───────┐
-              │  检测线程     │  MediaPipe HandLandmarker（VIDEO 模式）
-              │              │  左右手过滤 + largest/center/IoU 选择
-              └──────┬───────┘
-                     │ 最新检测（旧帧直接丢弃）
-              ┌──────┴───────┐
-              │  推理线程     │  HaMeR 裁剪 → checkpoint → 21 关节 + 网格
-              │              │  （MediaPipe 后端直接复用 world landmarks）
-              └──────┬───────┘
-                     │ 最新 PerceptionResult（frame_seq + 时间戳）
-                     ▼
-   重定向（掌面坐标系 → 弯曲/张开/对掌）
-                     ▼
-   One-Euro 滤波 → 速度限幅 → 状态机 → 20 维执行器目标
-                     │
-手机姿态 ─► phyphox HTTP 轮询 ─► 最新样本
-                     │                （可选，独立线程）
-                     ▼
-   `g` 开关 → 手机/手解剖帧绝对对齐 → 死区/增益/限幅 → 平滑
-                     ▼
-   MuJoCo mocap 基座朝向（整手 yaw/pitch/roll）
-                     ▼
-   MuJoCo 固定步长物理 + 120 触觉 + viewer/预览
+内置摄像头 ──► FramePacket ──► MediaPipe 检测线程 ──► HaMeR 推理线程
+                                             │
+                                             ▼
+                              21 关节 → 弯曲/张开/对掌
+                                             ▼
+                     One-Euro → 速度限幅 → 20 维执行器目标
+
+Astra 彩色流 ──► AprilTag 线程 ──► 6DoF 相对零点 → 位置 + 朝向
+                                             ▼
+                     ShadowHand.set_macro_pose（整手基座）
+                                             ▼
+                     MuJoCo 固定步长物理 + 120 触觉 + viewer/预览
 ```
 
 关键约定：
 
 - 帧对象是不可变 dataclass，采集缓冲区不会跨线程被修改。
-- 每个结果都带 `frame_seq`、`capture_ts`、`finished_ts`，因此可以区分
-  “这一帧没有手”和“worker 尚未产出结果”。
-- 主循环只读取最新结果，旧结果直接忽略。
-- 感知线程异常会写入 `WorkerHealth`、记录日志，并让进程以非零码退出，
-  不会静默停留在过期数据上。
+- 感知结果带 `frame_seq`、`capture_ts`、`finished_ts`；主循环只读最新结果。
+- tag 服务有独立最新值槽位，主循环从不等待相机或检测；tag 过期时冻结。
 - 左手会被镜像规范化后再重定向。v0.1 不驱动左手 Shadow Hand 模型。
+- Astra 的 RGB 输出是水平镜像的，`tag.mirror: auto` 会自动翻转。
 
 模块边界和线程模型见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
@@ -230,50 +224,33 @@ shadowlink calibrate --backend hamer --data-dir D:/models/hamer/_DATA
 ```
 
 零点数据保存在 Windows 的 `%APPDATA%\ShadowLink\calibration.json`，或 Linux 的
-`~/.config/shadowlink/calibration.json`。校准与后端和左右手绑定；切换后端时会
-提示重新校准，而不是悄悄使用错误的零点。
+`~/.config/shadowlink/calibration.json`。校准与后端和左右手绑定。
 
-详见 [docs/CALIBRATION.md](docs/CALIBRATION.md)。
+## AprilTag 整手 6DoF
 
-## 手机宏观姿态
-
-摄像头层保持原样，继续做连续手指重定向。运行 [phyphox](https://phyphox.org)
-的手机可以额外旋转整只 Shadow Hand（yaw、pitch、roll）。两路输入相互独立；
-手部基座通过 MuJoCo mocap body 驱动，因此手指动力学和触觉传感器都不受影响。
-
-1. 在手机上安装 phyphox，打开包含 **Attitude** 输出的实验（只提供陀螺仪和
-   加速度计的实验会走原始 IMU 回退路径）。
-2. 开启 **Remote Access**，让手机与电脑处于同一网络，记下手机 IP。
-3. 启动 ShadowLink：
-
-```bash
-shadowlink run --backend hamer --phone phyphox \
-  --phone-host 192.0.2.10 --phone-follow \
-  --data-dir D:/models/hamer/_DATA
-```
-
-按 `g` 开始或停止跟随；开启时以手机当前姿态作为世界参考，并让机械手的初始
-姿态与手机一致。跟随过程中可随时按 `0` 以当前手机姿态重新定义世界参考，
-机械手随之重新对齐，后续运动都相对这个新的零点。无窗口模式用 `--phone-follow`
-在首个可用样本到达时自动开始跟随。样本过期（默认 0.35 秒）时手部冻结并退出
-跟随，摄像头链路仍继续工作；恢复后按 `0` 重新对零即可继续。
-
-`shadowlink phone-test --host 192.0.2.10 --seconds 10` 会实时打印连接状态、
-采样率、四元数、欧拉角和相对轴角；`--list` 会打印实验的缓冲区名称和选中的
-`phone.mount_preset` 选择手机与手的固定安装关系。默认 `back` 对应计划中的
-手背绑法：手机顶部指向手指、充电口指向肘部、手机背面贴着手背，因此手机屏幕
-法向与手背法向重合、手机顶部与伸展后的中指同向、手机左侧与右手左侧同向。
-把手机平放在掌心、屏幕朝外测试时用 `--phone-mount in_hand`；两者相差绕手机
-长轴的 180° 旋转。`phone.gain` 调整增益，
-`phone.max_angle_deg` 是可选限幅（默认 `180`，即不限幅）。`phone.pivot` 选择
-旋转中心：`wrist`（默认）、`forearm` 或 `palm`。被动查看器会在 0 位手部朝向
-处画出 RGB 三轴，HUD 同时显示该 0 位的 `p/r/y` 欧拉角。
-
-> **安全提醒：** phyphox Remote Access 是无认证的明文 HTTP。只应在可信局域网
-> 使用，不要把端口转发到公网，用完后关闭 Remote Access。ShadowLink 只发起
-> 出站请求，不监听手机连接，也不会保存手机地址。
-
-设置、轴映射和限制详见 [docs/PHONE.md](docs/PHONE.md)。
+- 打印/显示 `src/shadowlink/assets/apriltag/tag36h11_id5.png`，**不要镜像**。
+- `size.md` 与配置默认值都是 57 mm（按黑色边框边长）。
+- 会单独弹出 **AprilTag Detection** 窗口，显示 Astra 画面、tag 轮廓、坐标轴、
+  ID、距离、镜像状态和检测帧率；用 `--no-tag-show` 可以关闭。
+- 相机默认 DSHOW、640×480，约 20 FPS；DSHOW 比 Astra 的 MSMF 打开更可靠。
+  需要更高帧率可试 `--tag-api msmf`，但打开可能很慢。
+- 平移零点默认固定为 **画面中心、深度 1.00 m**
+  （`tag.zero_mode: fixed`，`tag.zero_distance_m: 1.0`）。把 tag 放在这个位置
+  附近，手的平移偏移才接近零。朝向零点锁存为**第一次检测到有效 tag 时的姿态**，
+  整个会话不变；`g` 只开关跟随，不会重设零点。`p` 开关平移，`0` 显式重设朝向
+  并清空固定平移零点，`r` 全部重置。如果想用第一次 tag 位置作平移零点，设
+  `tag.zero_mode: sample`。
+- 初始姿态：**手心朝下**，中指指向门。
+- tag 坐标轴：**X+** = 向前/中指，**Y+** = 向右，**Z+** = 手心朝向，
+  **Z−** = 仿真向上。旋转映射为 **绿轴 → 横滚**、**红轴 → 俯仰**、
+  **蓝轴 → 左右转**，三个轴相互独立。
+- 平移使用 `overhead` 预设：tag 在画面中**向右**移动 → 机械手朝门的方向
+  （世界 +x）移动；tag **靠近**头顶摄像头 → 机械手向上（世界 +z）移动。
+- 不再限制机械手的位置范围，tag 移动多远，手就跟随多远。tag 位姿丢失超过
+  0.5 秒后，位置和朝向都冻结在原地，不会跳回零。
+- tag 应在 Astra 画面内约 0.5–1.2 m，靠近青色中心/1 m 零点标记，光照均匀。
+  太远或太斜会漏检。
+- 打印、坐标映射、内参和排错见 [docs/APRILTAG.md](docs/APRILTAG.md)。
 
 ## 性能
 
@@ -287,8 +264,7 @@ RTX 4060 Laptop、1200×1799 视频源、30 帧的参考数据：
 | 主循环 | 26.9 fps |
 
 检测和推理会跨帧重叠，物理循环按真实时间独立推进。机器较慢时可用
-`--skip 2`，或直接用 `--backend mediapipe` 去掉 GPU 模型。实际数据取决于
-分辨率、裁剪尺寸和散热状态。在这块 GPU 上 `--no-fp16` 没有更快。
+`--skip 2`，或直接用 `--backend mediapipe`。
 
 ## 离线工具
 
@@ -316,18 +292,13 @@ ruff format --check src tests
 需要模型或真实图片的集成测试是 opt-in：
 
 ```bash
-# HaMeR checkpoint + MediaPipe + 一张图片
 SHADOWLINK_TEST_DATA=D:/models/hamer/_DATA \
 SHADOWLINK_TEST_IMAGE=example_data/test5.jpg \
 pytest -m hamer -q
 
-# 仅 MediaPipe
 SHADOWLINK_TEST_HAND_MODEL=D:/models/hamer/_DATA/mediapipe/hand_landmarker.task \
 SHADOWLINK_TEST_IMAGE=example_data/test5.jpg \
 pytest -m mediapipe -q
-
-# 真实手机 + phyphox
-SHADOWLINK_TEST_PHONE=1 SHADOWLINK_TEST_PHONE_HOST=192.0.2.10 pytest -m phone -q
 ```
 
 `tests/test_no_path_hacks.py` 会强制检查安装包中不存在 `os.chdir`、
@@ -344,13 +315,12 @@ src/shadowlink/
 ├── app.py                唯一的编排者
 ├── cli.py                argparse 入口
 ├── math3d.py             纯 NumPy 四元数工具
-├── phone/                phyphox HTTP 客户端、姿态回退、服务
 ├── perception/           MediaPipe 检测器、HaMeR 后端、worker、选择器
-├── retarget/             几何、映射、平滑、宏观姿态、校准
+├── tag/                  AprilTag 相机线程、相对 6DoF 控制器
+├── retarget/             几何、映射、平滑、校准
 ├── sim/                  MJCF 加载、Shadow Hand、固定步长、viewer
 ├── ui/                   叠加层、遥测、OpenCV 窗口/录像
-├── tools/                setup-models、doctor、触觉生成、
-│                         phone-test、render-pose
+├── tools/                setup-models、doctor、触觉生成、render-pose
 └── assets/shadow_hand/   MJCF、OBJ 网格、触觉 XML、原始许可证
 ```
 
@@ -360,8 +330,8 @@ src/shadowlink/
 
 ShadowLink 自身代码采用 MIT 许可。HaMeR 是以 MIT 许可引入的子模块；Shadow Hand
 资产来自 MuJoCo Menagerie / Shadow Robot，采用 Apache-2.0；MediaPipe 采用
-Apache-2.0。MANO 与 HaMeR checkpoint **不随仓库分发**，仍受各自原始许可约束。
-phyphox 是第三方 App，不随本项目分发；ShadowLink 只读取其公开 HTTP 接口。详见
+Apache-2.0；AprilTag 采用 BSD-2-Clause，Python 绑定为 `pupil-apriltags`。
+MANO 与 HaMeR checkpoint **不随仓库分发**，仍受各自原始许可约束。详见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 引用

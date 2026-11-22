@@ -233,10 +233,9 @@ def load_keyframes(
 ) -> dict[str, np.ndarray]:
     """Load hand keyframes, ignoring any extra scene objects.
 
-    The shipped keyframe file stores only the hand qpos (24 entries) because it
-    predates the grasp ball.  The scene adds a free body afterwards, so a
-    hand-only vector is padded with ``qpos0`` for the remaining DOFs; the ball's
-    pose does not affect any actuator length.
+    The shipped keyframe file stores only the hand qpos (24 entries). The scene
+    appends the door hinge, so a hand-only vector is padded with ``qpos0`` for
+    the remaining DOFs; the door pose does not affect any actuator length.
     """
     tree = ET.parse(Path(path))
     poses: dict[str, np.ndarray] = {}

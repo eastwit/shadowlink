@@ -28,6 +28,16 @@ license in `LICENSE` applies only to ShadowLink's own source code.
   `src/shadowlink/assets/shadow_hand/README.md`.
 - The tactile site/sensor XML files are a derivative of that description.
 
+## AprilTag 3 and pupil-apriltags
+
+- AprilTag C library: https://github.com/AprilRobotics/apriltag
+- License: BSD 2-Clause (AprilTag 3).
+- Python binding: https://github.com/pupil-labs/apriltags
+  (`pupil-apriltags`), which bundles the official C detector. It is a core
+  dependency installed with ShadowLink and is not copied into this repository.
+- The reference tag image in `src/shadowlink/assets/apriltag/` is the user's
+  own tag36h11 ID 5 asset, not a third-party work.
+
 ## MediaPipe
 
 - Project: https://github.com/google-ai-edge/mediapipe
@@ -39,14 +49,3 @@ license in `LICENSE` applies only to ShadowLink's own source code.
 
 - Project: https://github.com/google-deepmind/mujoco
 - License: Apache License 2.0.
-
-## phyphox (optional phone attitude source)
-
-- Project: https://phyphox.org
-- License: phyphox is a separate third-party application and is **not** bundled
-  with or redistributed by ShadowLink.
-- Usage: optional. ShadowLink reads the app's documented Remote Access HTTP
-  endpoints (`/config`, `/get`, `/control`) over the local network. No phone
-  code, data, or device identifiers are included in this repository.
-- Security: Remote Access is unauthenticated plain HTTP. Use it only on a
-  trusted local network and never expose it to the internet.

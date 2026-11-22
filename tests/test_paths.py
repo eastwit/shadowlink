@@ -68,3 +68,11 @@ def test_resolve_output_path_creates_parents(tmp_path):
     resolved = paths.resolve_output_path(target)
     assert resolved == target.resolve()
     assert resolved.parent.is_dir()
+
+
+def test_apriltag_reference_assets_are_installed():
+    from shadowlink.paths import APRILTAG_ASSETS_DIR
+
+    assert APRILTAG_ASSETS_DIR.is_dir()
+    assert (APRILTAG_ASSETS_DIR / "tag36h11_id5.png").is_file()
+    assert "57" in (APRILTAG_ASSETS_DIR / "size.md").read_text(encoding="utf-8")

@@ -110,56 +110,6 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     return calibrate_from_args(args, _load_config(args))
 
 
-def cmd_rgbd_check(args: argparse.Namespace) -> int:
-    from dataclasses import replace
-
-    from shadowlink.tools.rgbd_check import run_rgbd_check
-
-    cfg = _load_config(args)
-    changes = {"source": "rgbd"}
-    if args.camera is not None:
-        changes["camera"] = args.camera
-    if args.depth_sdk is not None:
-        changes["depth_sdk"] = args.depth_sdk
-    return run_rgbd_check(
-        replace(cfg.capture, **changes),
-        seconds=args.seconds,
-        out=args.out,
-    )
-
-
-def cmd_phone_test(args: argparse.Namespace) -> int:
-    from dataclasses import replace
-
-    from shadowlink.phone.client import parse_host_port
-    from shadowlink.tools.phone_test import run_phone_test
-
-    cfg = _load_config(args)
-    host = args.host
-    port = args.port
-    if host is not None:
-        try:
-            parsed_host, parsed_port = parse_host_port(host, default_port=port or cfg.phone.port)
-        except ValueError as exc:
-            raise ConfigError(str(exc)) from exc
-        host = parsed_host
-        if port is None:
-            port = parsed_port
-    phone = replace(
-        cfg.phone,
-        source="phyphox",
-        host=host if host is not None else cfg.phone.host,
-        port=port if port is not None else cfg.phone.port,
-        auto_discover=bool(args.scan) or cfg.phone.auto_discover,
-    )
-    return run_phone_test(
-        phone,
-        seconds=args.seconds,
-        list_buffers=args.list,
-        as_json=args.json,
-    )
-
-
 def cmd_setup_models(args: argparse.Namespace) -> int:
     from shadowlink.tools.setup_models import setup_models
 
@@ -209,24 +159,81 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="camera/video hand teleoperation")
     _common(run)
-    run.add_argument("--source", choices=["camera", "video", "rgbd"], default=None)
+    run.add_argument("--source", choices=["camera", "video"], default=None)
     run.add_argument("--camera", default=None, help="camera index, file, or stream URL")
-    run.add_argument(
-        "--depth-sdk",
-        default=None,
-        help="directory containing OpenNI2.dll (also OPENNI2_REDIST)",
-    )
     run.add_argument(
         "--no-position",
         dest="position",
         action="store_false",
         default=None,
-        help="disable whole-hand translation from the RGBD depth camera",
+        help="disable whole-hand tag translation",
     )
-    run.add_argument("--position-preset", choices=["front", "palm", "back"], default=None)
+    run.add_argument(
+        "--tag-camera",
+        default=None,
+        help="AprilTag camera index or path (default: tag.camera)",
+    )
+    run.add_argument(
+        "--tag-api",
+        choices=["any", "dshow", "msmf"],
+        default=None,
+        help="AprilTag camera backend (Astra opens reliably with dshow)",
+    )
+    run.add_argument("--tag-family", default=None, help="AprilTag family, e.g. tag36h11")
+    run.add_argument("--tag-id", type=int, default=None, help="expected tag id")
+    run.add_argument(
+        "--tag-size",
+        type=float,
+        default=None,
+        metavar="M",
+        help="tag black-border edge length in metres",
+    )
+    run.add_argument(
+        "--tag-mirror",
+        choices=["auto", "on", "off"],
+        default=None,
+        help="horizontal mirror correction for the tag camera",
+    )
+    run.add_argument(
+        "--tag-zero-mode",
+        choices=["sample", "fixed"],
+        default=None,
+        help="translation zero: first tag sample, or image center at a fixed depth",
+    )
+    run.add_argument(
+        "--tag-zero-distance",
+        type=float,
+        default=None,
+        metavar="M",
+        help="fixed zero depth in metres (default: 1.0)",
+    )
+    run.add_argument(
+        "--tag-show",
+        dest="tag_show",
+        action="store_true",
+        default=None,
+        help="show the AprilTag detection window (default)",
+    )
+    run.add_argument(
+        "--no-tag-show",
+        dest="tag_show",
+        action="store_false",
+        default=None,
+        help="hide the AprilTag detection window",
+    )
+    run.add_argument(
+        "--tag-follow",
+        action="store_true",
+        default=None,
+        help="start tag 6-DoF follow as soon as a tag is detected",
+    )
+    run.add_argument(
+        "--position-preset",
+        choices=["front", "palm", "back", "overhead"],
+        default=None,
+    )
     run.add_argument("--position-gain", type=float, default=None)
     run.add_argument("--position-deadzone", type=float, default=None, metavar="M")
-    run.add_argument("--position-max-offset", type=float, default=None, metavar="M")
     run.add_argument("--backend", choices=["hamer", "mediapipe"], default=None)
     run.add_argument("--side", choices=["any", "left", "right"], default=None)
     run.add_argument("--pick", choices=["largest", "center", "track"], default=None)
@@ -244,36 +251,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--checkpoint", default=None)
     run.add_argument("--hand-model", default=None)
     run.add_argument("--calibration", default=None)
-    run.add_argument("--phone", choices=["none", "phyphox"], default=None)
-    run.add_argument("--phone-host", default=None, help="phone IP or host[:port]")
-    run.add_argument("--phone-port", type=int, default=None)
-    run.add_argument(
-        "--phone-mount",
-        choices=["back", "in_hand", "custom"],
-        default=None,
-        help="phone-to-hand mount: back (strapped to the back of the hand), "
-        "in_hand (held screen-up in the palm), or custom (phone.mount_* values)",
-    )
-    run.add_argument(
-        "--phone-scan",
-        action="store_true",
-        default=None,
-        help="scan the local /24 for phyphox when the phone is unreachable",
-    )
-    run.add_argument(
-        "--phone-follow",
-        action="store_true",
-        default=None,
-        help="start following as soon as a ready phone sample arrives",
-    )
     run.add_argument("--debug", action="store_true", default=None)
     run.set_defaults(func=cmd_run)
 
     cal = sub.add_parser("calibrate", help="capture and save a neutral pose")
     _common(cal)
-    cal.add_argument("--source", choices=["camera", "video", "rgbd"], default=None)
+    cal.add_argument("--source", choices=["camera", "video"], default=None)
     cal.add_argument("--camera", default=None)
-    cal.add_argument("--depth-sdk", default=None)
     cal.add_argument("--backend", choices=["hamer", "mediapipe"], default=None)
     cal.add_argument("--side", choices=["any", "left", "right"], default=None)
     cal.add_argument("--pick", choices=["largest", "center", "track"], default=None)
@@ -287,34 +271,6 @@ def build_parser() -> argparse.ArgumentParser:
     cal.add_argument("--calibration", default=None)
     cal.add_argument("--debug", action="store_true", default=None)
     cal.set_defaults(func=cmd_calibrate)
-
-    rgbd = sub.add_parser(
-        "rgbd-check",
-        help="verify the depth sensor and colour stream",
-    )
-    _common(rgbd)
-    rgbd.add_argument("--camera", default=None, help="colour camera index")
-    rgbd.add_argument("--depth-sdk", default=None)
-    rgbd.add_argument("--seconds", type=float, default=2.0)
-    rgbd.add_argument("--out", default=None, help="write a colour/depth PNG here")
-    rgbd.set_defaults(func=cmd_rgbd_check)
-
-    phone_test = sub.add_parser(
-        "phone-test",
-        help="print live phyphox attitude state and buffers",
-    )
-    _common(phone_test)
-    phone_test.add_argument("--seconds", type=float, default=10.0)
-    phone_test.add_argument("--host", default=None, help="phone IP or host[:port]")
-    phone_test.add_argument("--port", type=int, default=None)
-    phone_test.add_argument("--scan", action="store_true")
-    phone_test.add_argument(
-        "--list",
-        action="store_true",
-        help="print the experiment buffers and the selected source, then exit",
-    )
-    phone_test.add_argument("--json", action="store_true")
-    phone_test.set_defaults(func=cmd_phone_test)
 
     setup = sub.add_parser("setup-models", help="download/check models")
     setup.add_argument("--data-dir", default=None)

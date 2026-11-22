@@ -24,6 +24,7 @@ _PACKAGES = (
     ("opencv-python", "cv2"),
     ("mujoco", "mujoco"),
     ("mediapipe", "mediapipe"),
+    ("pupil-apriltags", "pupil_apriltags"),
     ("PyYAML", "yaml"),
     ("torch", "torch"),
     ("pytorch-lightning", "pytorch_lightning"),

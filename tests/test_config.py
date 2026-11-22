@@ -5,15 +5,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import numpy as np
 import pytest
 import yaml
 
 from shadowlink.app import apply_cli_overrides
 from shadowlink.cli import _load_config
 from shadowlink.config import AppConfig, ConfigError
-from shadowlink.math3d import q_rotate
-from shadowlink.retarget.macro_pose import mount_for_config
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_YAML = ROOT / "configs" / "default.yaml"
@@ -50,9 +47,13 @@ def test_dotted_overrides_are_typed_and_do_not_mutate_the_original():
         "retarget.nope=1",
         "retarget.flex_gain=abc",
         "perception.backend=openpose",
+        "phone.source=phyphox",
+        "joycon.side=left",
+        "capture.depth_sdk=C:/sdk",
+        "position.input=rgbd",
     ],
 )
-def test_bad_overrides_are_rejected(pair):
+def test_bad_or_removed_overrides_are_rejected(pair):
     with pytest.raises(ConfigError):
         AppConfig().apply_overrides([pair])
 
@@ -60,6 +61,8 @@ def test_bad_overrides_are_rejected(pair):
 def test_validation_rejects_inconsistent_values():
     with pytest.raises(ConfigError):
         AppConfig().apply_overrides(["capture.source=video"])
+    with pytest.raises(ConfigError):
+        AppConfig().apply_overrides(["capture.source=rgbd"])
     with pytest.raises(ConfigError):
         AppConfig().apply_overrides(["perception.skip=0"])
     with pytest.raises(ConfigError):
@@ -72,112 +75,13 @@ def test_yaml_relative_paths_resolve_against_the_file(tmp_path):
     config_path = tmp_path / "nested" / "config.yaml"
     config_path.parent.mkdir()
     config_path.write_text(
-        "capture:\n  source: video\n  video: clips/demo.mp4\ndata:\n  data_dir: models\n",
+        "capture:\n  source: video\n  video: clips/demo.mp4\n"
+        "data:\n  data_dir: models\n",
         encoding="utf-8",
     )
     config = AppConfig.from_yaml(config_path)
     assert config.capture.video == str((config_path.parent / "clips" / "demo.mp4").resolve())
     assert config.data.data_dir == str((config_path.parent / "models").resolve())
-
-
-def test_phone_overrides_and_cli_flags():
-    config = AppConfig().apply_overrides(
-        [
-            "phone.source=phyphox",
-            "phone.host=192.0.2.10",
-            "phone.gain=1.5",
-            "phone.deadzone_deg=2.0",
-            "phone.auto_follow=true",
-        ]
-    )
-    assert config.phone.source == "phyphox"
-    assert config.phone.host == "192.0.2.10"
-    assert config.phone.gain == pytest.approx(1.5)
-    args = argparse.Namespace(
-        phone="phyphox",
-        phone_host="192.0.2.11:8090",
-        phone_follow=True,
-    )
-    updated = apply_cli_overrides(config, args)
-    assert updated.phone.host == "192.0.2.11"
-    assert updated.phone.port == 8090
-    assert updated.phone.auto_follow is True
-
-
-def test_phone_scan_does_not_require_a_host():
-    config = AppConfig().apply_overrides(["phone.source=phyphox", "phone.auto_discover=true"])
-    assert config.phone.host is None
-    assert config.phone.auto_discover is True
-
-
-@pytest.mark.parametrize(
-    "pair",
-    [
-        "phone.source=keyboard",
-        "phone.mount_preset=elbow",
-        "phone.deadzone_deg=180.0",
-        "phone.max_angle_deg=0.0",
-        "phone.mount_w=nan",
-        "phone.gain=-1",
-        "phone.stale_timeout_s=0",
-        "phone.port=0",
-        "phone.poll_hz=0",
-    ],
-)
-def test_invalid_phone_settings_are_rejected(pair):
-    with pytest.raises(ConfigError):
-        AppConfig().apply_overrides([pair])
-
-
-def test_zero_mount_quaternion_is_rejected():
-    with pytest.raises(ConfigError):
-        AppConfig().apply_overrides(
-            [
-                "phone.mount_w=0.0",
-                "phone.mount_x=0.0",
-                "phone.mount_y=0.0",
-                "phone.mount_z=0.0",
-            ]
-        )
-
-
-def test_phone_defaults_describe_the_wrist_strap_mount_without_a_clamp():
-    phone = AppConfig().phone
-    assert phone.pivot == "wrist"
-    assert phone.mount_preset == "back"
-    assert phone.max_angle_deg == pytest.approx(180.0)
-    # The custom values mirror the default preset and are kept for reference.
-    assert (phone.mount_w, phone.mount_x, phone.mount_y, phone.mount_z) == pytest.approx(
-        (0.0, 0.7071068, 0.0, -0.7071068)
-    )
-
-
-def test_back_mount_maps_phone_axes_onto_the_strap_orientation():
-    mount = mount_for_config(AppConfig().phone)
-    # Charging port -> elbow (-z), phone top -> fingers, screen -> dorsal (-x).
-    np.testing.assert_allclose(q_rotate(mount, [1.0, 0.0, 0.0]), [0.0, 0.0, -1.0], atol=1e-6)
-    np.testing.assert_allclose(q_rotate(mount, [0.0, 1.0, 0.0]), [0.0, -1.0, 0.0], atol=1e-6)
-    np.testing.assert_allclose(q_rotate(mount, [0.0, 0.0, 1.0]), [-1.0, 0.0, 0.0], atol=1e-6)
-
-
-def test_in_hand_mount_is_the_back_mount_flipped_about_the_long_axis():
-    config = AppConfig().apply_overrides(["phone.mount_preset=in_hand"])
-    mount = mount_for_config(config.phone)
-    # Long axis unchanged; width and screen normal reversed.
-    np.testing.assert_allclose(q_rotate(mount, [1.0, 0.0, 0.0]), [0.0, 0.0, -1.0], atol=1e-6)
-    np.testing.assert_allclose(q_rotate(mount, [0.0, 1.0, 0.0]), [0.0, 1.0, 0.0], atol=1e-6)
-    np.testing.assert_allclose(q_rotate(mount, [0.0, 0.0, 1.0]), [1.0, 0.0, 0.0], atol=1e-6)
-
-
-def test_phone_mount_cli_flag_reaches_the_config():
-    args = argparse.Namespace(phone_mount="in_hand")
-    updated = apply_cli_overrides(AppConfig(), args)
-    assert updated.phone.mount_preset == "in_hand"
-
-
-def test_phyphox_requires_a_host_without_discovery():
-    with pytest.raises(ConfigError):
-        AppConfig().apply_overrides(["phone.source=phyphox"])
 
 
 def test_unknown_yaml_keys_are_rejected(tmp_path):
@@ -213,60 +117,106 @@ def test_explicit_cli_flags_beat_the_config_file():
     assert updated.runtime.max_frames == 7
 
 
-def test_rgbd_and_position_defaults():
+def test_tag_and_position_defaults():
     config = AppConfig()
     assert config.capture.source == "camera"
-    assert config.capture.depth_sdk is None
-    assert config.capture.depth_width == 640
-    assert config.capture.depth_height == 480
-    assert config.capture.depth_fps == 30
-    assert config.capture.depth_fx is None
+    assert config.capture.camera == "1"
     assert config.position.enabled is True
-    assert config.position.preset == "palm"
-    assert config.position.hand_relative is True
-    assert config.position.max_offset_m == pytest.approx(0.25)
-    assert config.position.min_depth_mm < config.position.max_depth_mm
+    assert config.position.preset == "overhead"
+    assert config.tag.camera == "0"
+    assert config.tag.api == "dshow"
+    assert config.tag.width == 640
+    assert config.tag.height == 480
+    assert config.tag.family == "tag36h11"
+    assert config.tag.tag_id == 5
+    assert config.tag.size_m == pytest.approx(0.057)
+    assert config.tag.mirror == "auto"
+    assert config.tag.show is True
+    assert config.tag.zero_mode == "fixed"
+    assert config.tag.zero_distance_m == pytest.approx(1.0)
+    assert config.tag.auto_follow is True
 
 
 @pytest.mark.parametrize(
     "pair",
     [
+        "tag.camera=",
+        "tag.width=0",
+        "tag.height=0",
+        "tag.fps=0",
+        "tag.hfov_deg=180",
+        "tag.fx=900",
+        "tag.family= ",
+        "tag.tag_id=-1",
+        "tag.size_m=0",
+        "tag.quad_decimate=0.5",
+        "tag.nthreads=0",
+        "tag.retry_s=0",
+        "tag.stale_timeout_s=0",
+        "tag.pivot=elbow",
+        "tag.rotation_gain=0",
+        "tag.rotation_deadzone_deg=180",
+        "tag.rotation_max_angle_deg=0",
+        "tag.rotation_smoothing_tau_s=-1",
+        "tag.rotation_max_rate_rad_s=0",
+        "tag.api=serial",
+        "tag.mirror=flip",
+        "tag.zero_mode=relative",
+        "tag.zero_distance_m=0",
+        "position.preset=sideways",
         "position.gain=0",
-        "position.max_offset_m=0",
-        "position.deadzone_m=0.3",
-        "position.min_landmarks=0",
-        "position.min_landmarks=6",
-        "position.min_valid_pixels=0",
-        "position.sample_radius_px=0",
+        "position.deadzone_m=-0.1",
         "position.temporal_window=0",
         "position.max_rate_m_s=0",
-        "position.align_offset_x=0.6",
-        "position.max_depth_mm=100",
-        "position.preset=sideways",
-        "capture.depth_width=0",
-        "capture.depth_fps=0",
     ],
 )
-def test_invalid_rgbd_and_position_settings_are_rejected(pair):
+def test_invalid_tag_and_position_settings_are_rejected(pair):
     with pytest.raises(ConfigError):
         AppConfig().apply_overrides([pair])
 
 
+def test_tag_camera_must_differ_from_the_hand_camera():
+    with pytest.raises(ConfigError):
+        AppConfig().apply_overrides(["tag.camera=1"])
+    updated = AppConfig().apply_overrides(["capture.camera=0", "tag.camera=1"])
+    assert updated.capture.camera == "0"
+    assert updated.tag.camera == "1"
+
+
+def test_tag_cli_flags_reach_the_config():
+    args = argparse.Namespace(
+        camera="1",
+        tag_camera="0",
+        tag_api="msmf",
+        tag_family="tag36h11",
+        tag_id=0,
+        tag_size=0.0456,
+        tag_mirror="on",
+        tag_zero_mode="sample",
+        tag_zero_distance=0.8,
+        tag_follow=True,
+    )
+    updated = apply_cli_overrides(AppConfig(), args)
+    assert updated.capture.camera == "1"
+    assert updated.tag.camera == "0"
+    assert updated.tag.api == "msmf"
+    assert updated.tag.tag_id == 0
+    assert updated.tag.size_m == pytest.approx(0.0456)
+    assert updated.tag.mirror == "on"
+    assert updated.tag.zero_mode == "sample"
+    assert updated.tag.zero_distance_m == pytest.approx(0.8)
+    assert updated.tag.auto_follow is True
+
+
 def test_position_cli_flags_reach_the_config():
     args = argparse.Namespace(
-        source="rgbd",
-        depth_sdk="C:/sdk",
         position=False,
         position_preset="palm",
         position_gain=1.5,
         position_deadzone=0.02,
-        position_max_offset=0.3,
     )
     updated = apply_cli_overrides(AppConfig(), args)
-    assert updated.capture.source == "rgbd"
-    assert updated.capture.depth_sdk == "C:/sdk"
     assert updated.position.enabled is False
     assert updated.position.preset == "palm"
     assert updated.position.gain == pytest.approx(1.5)
     assert updated.position.deadzone_m == pytest.approx(0.02)
-    assert updated.position.max_offset_m == pytest.approx(0.3)

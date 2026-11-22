@@ -1,10 +1,13 @@
-"""Application orchestration: capture -> perception -> retarget -> MuJoCo."""
+"""Application orchestration: camera -> perception -> retarget -> MuJoCo.
+
+Whole-hand position and orientation come from a hand-held AprilTag. The
+built-in camera continues to reconstruct the fingers.
+"""
 
 from __future__ import annotations
 
 import argparse
 import logging
-import math
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -13,8 +16,8 @@ import mujoco
 import numpy as np
 
 from shadowlink.capture import open_source
-from shadowlink.config import AppConfig, ConfigError
-from shadowlink.math3d import q_euler_deg
+from shadowlink.config import AppConfig
+from shadowlink.math3d import q_euler_deg, q_from_matrix
 from shadowlink.paths import (
     KEYFRAMES_XML,
     SCENE_XML,
@@ -25,26 +28,15 @@ from shadowlink.paths import (
 from shadowlink.perception.base import create_backend, create_detector
 from shadowlink.perception.selector import DetectionSelector
 from shadowlink.perception.worker import PerceptionService
-from shadowlink.phone import NullPhoneSource, PhyphoxService
-from shadowlink.phone.client import parse_host_port
-from shadowlink.position import (
-    DepthFrameLog,
-    PalmMeasurement,
-    PositionController,
-    PositionSettings,
-    camera_to_local_axes,
-    hand_base_rotation,
-    sample_palm_position,
-)
 from shadowlink.retarget.calibration import CalibrationError, CalibrationStore, Neutral
 from shadowlink.retarget.geometry import HandGeometryError
-from shadowlink.retarget.macro_pose import MacroPoseController, MacroPoseSettings
 from shadowlink.retarget.mapper import Retargeter
 from shadowlink.retarget.smoothing import TargetController
 from shadowlink.sim.model import load_model, load_start_pose
 from shadowlink.sim.shadow_hand import ShadowHand
 from shadowlink.sim.stepping import FixedStepClock
 from shadowlink.sim.viewer import Viewer
+from shadowlink.tag import TagControlSettings, TagPoseController, TagService, TagSample
 from shadowlink.types import HandObservation, PerceptionResult
 from shadowlink.ui.overlay import draw_hud, draw_observation
 from shadowlink.ui.telemetry import Telemetry
@@ -54,6 +46,20 @@ log = logging.getLogger(__name__)
 
 CALIBRATION_MAX_AGE_S = 0.25
 
+# Hand-local +X is the palm normal, +Z points along the middle finger, and +Y
+# is the hand's left. This pose puts the palm down, the middle finger toward
+# the door (+world x), and the hand's left toward +world y.
+PALM_DOWN_QUAT = q_from_matrix(
+    np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [-1.0, 0.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+)
+
 
 class TeleopApp:
     def __init__(
@@ -62,7 +68,7 @@ class TeleopApp:
         *,
         source=None,
         perception=None,
-        phone_source=None,
+        tag_source=None,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -76,26 +82,12 @@ class TeleopApp:
             self.model,
             self.data,
             self.layout,
-            macro_pivot=config.phone.pivot,
+            macro_pivot=config.tag.pivot,
         )
         self.start_ctrl = load_start_pose(self.model, config.sim.start_pose, KEYFRAMES_XML)
         self.hand.reset(self.start_ctrl)
+        self.hand.set_macro_pose(PALM_DOWN_QUAT, np.zeros(3, dtype=np.float64))
         mujoco.mj_forward(self.model, self.data)
-
-        self.macro = MacroPoseController(
-            MacroPoseSettings.from_config(config.phone),
-            self.hand.macro_pose,
-        )
-        self.following = False
-        self._auto_follow_armed = bool(config.phone.auto_follow)
-        self._phone_enabled = config.phone.source != "none"
-        if phone_source is not None:
-            self.orientation = phone_source
-            self._phone_enabled = True
-        elif config.phone.source == "phyphox":
-            self.orientation = PhyphoxService(config.phone, clock=clock)
-        else:
-            self.orientation = NullPhoneSource()
 
         self.calibration_store = CalibrationStore(resolve_calibration_path(config.data.calibration))
         calibration = self._load_calibration()
@@ -128,27 +120,32 @@ class TeleopApp:
             )
         self.perception = perception
 
-        self.position_enabled = bool(config.position.enabled and config.capture.source == "rgbd")
-        self.position: PositionController | None = (
-            PositionController(PositionSettings.from_config(config.position))
-            if self.position_enabled
-            else None
+        self.tag: TagService = (
+            tag_source if tag_source is not None else TagService(config.tag, clock=clock)
         )
-        self.positioning = self.position_enabled
-        self._depth_log: DepthFrameLog | None = None
-        self._anatomy_axes: np.ndarray | None = None
-        if self.position_enabled:
-            fps = self.source.fps or 30.0
-            maxlen = max(8, int(math.ceil(config.perception.max_age_s * fps)) + 4)
-            self._depth_log = DepthFrameLog(maxlen=maxlen)
+        self.tag_pose = TagPoseController(
+            TagControlSettings.from_config(config.tag, config.position),
+            self.hand.macro_pose,
+        )
+        self.tag_positioning = bool(config.position.enabled)
+        self.tag_following = False
+        self._tag_auto_follow_armed = bool(config.tag.auto_follow)
 
         self.viewer = Viewer(
             self.model,
             self.data,
             enabled=config.sim.viewer,
-            distance=0.75 if self.position_enabled else None,
+            distance=0.75,
         )
-        self.preview = PreviewWindow(config.ui.window_name, enabled=config.ui.show)
+        self.preview = PreviewWindow(
+            config.ui.window_name,
+            enabled=config.ui.show,
+            resizable=True,
+        )
+        self.tag_preview = PreviewWindow(
+            "AprilTag Detection",
+            enabled=config.ui.show and config.tag.show,
+        )
         self.telemetry = Telemetry()
         self.recorder: VideoRecorder | None = None
         if config.ui.record:
@@ -190,7 +187,7 @@ class TeleopApp:
         frames = 0
         limit = max_frames or self.config.runtime.max_frames or 0
         self.perception.start()
-        self.orientation.start()
+        self.tag.start()
         self.viewer.launch()
         self.stepper.reset(self._clock())
         self.controller.reset()
@@ -202,8 +199,6 @@ class TeleopApp:
                 frame = self.source.read()
                 if frame is None:
                     break
-                if self._depth_log is not None:
-                    self._depth_log.add(frame)
                 if frame.seq % max(1, self.config.perception.skip) == 0:
                     self.perception.submit(frame)
 
@@ -222,37 +217,35 @@ class TeleopApp:
                     except HandGeometryError as exc:
                         log.debug("skipping degenerate observation: %s", exc)
 
-                measurement = self._palm_measurement(observation, now)
-                translation = None
-                if self.position is not None:
-                    if self.positioning:
-                        rotation = self._position_rotation(observation)
-                        translation = self.position.update(measurement, now, rotation)
-                    else:
-                        translation = self.position.output
+                tag_sample = self.tag.latest()
+                # The first valid tag orientation is the absolute orientation
+                # zero for the session. Capture it even if follow is currently
+                # disabled, so later `g` toggles do not change the zero.
+                if (
+                    tag_sample is not None
+                    and tag_sample.ready
+                    and not self.tag_pose.initialized
+                ):
+                    self.tag_pose.zero_orientation(tag_sample, self.hand.macro_pose)
+                    self._last_status = "absolute tag orientation zero captured"
+                if (
+                    self._tag_auto_follow_armed
+                    and not self.tag_following
+                    and tag_sample is not None
+                    and tag_sample.ready
+                ):
+                    self._tag_auto_follow_armed = False
+                    self._enable_tag_follow(tag_sample)
+                translation = self.tag_pose.update_translation(
+                    tag_sample, now, self.tag_positioning
+                )
+                tag_quat = self.tag_pose.update_orientation(
+                    tag_sample, now, self.tag_following
+                )
 
                 targets = self.controller.update(target, now)
                 self.hand.set_targets(targets)
-
-                sample = self.orientation.latest()
-                if (
-                    self._auto_follow_armed
-                    and not self.following
-                    and sample is not None
-                    and sample.ready
-                ):
-                    self._auto_follow_armed = False
-                    self._enable_follow(sample)
-                macro_changed = False
-                quat = None
-                if self.following:
-                    if sample is None:
-                        self.following = False
-                        self._last_status = "phone lost; macro pose frozen (press 0 or g)"
-                    else:
-                        quat = self.macro.update(sample, now, True)
-                if quat is not None or self.position is not None:
-                    macro_changed = self.hand.set_macro_pose(quat, translation)
+                macro_changed = self.hand.set_macro_pose(tag_quat, translation)
 
                 steps = self.stepper.advance(now)
                 if steps:
@@ -261,11 +254,10 @@ class TeleopApp:
                 elif macro_changed:
                     mujoco.mj_forward(self.model, self.data)
                 self.hand.update_touch_colors(self.config.sim.touch_force_scale)
-                if self._phone_enabled:
-                    self.viewer.set_macro_zero(
-                        self.macro.zero_hand,
-                        self.hand.macro_origin_world,
-                    )
+                self.viewer.set_macro_zero(
+                    self.tag_pose.zero_hand,
+                    self.hand.macro_origin_world,
+                )
                 self.viewer.sync()
 
                 self.telemetry.tick(now)
@@ -278,9 +270,9 @@ class TeleopApp:
                 if key == ord("c"):
                     self._calibrate_with(observation, now)
                 elif key == ord("g"):
-                    self._toggle_follow()
+                    self._toggle_tag_follow()
                 elif key == ord("0"):
-                    self._zero_phone()
+                    self._zero_tag(now)
                 elif key == ord("p"):
                     self._toggle_position()
                 elif key == ord("r"):
@@ -380,67 +372,72 @@ class TeleopApp:
         log.info("%s -> %s", self._last_status, self.calibration_store.path)
         return True
 
-    def _enable_follow(self, sample) -> None:
-        self.macro.set_zero(sample)
-        self.following = True
-        self._last_status = "phone follow on (hand aligned to phone attitude)"
+    # ------------------------------------------------------------- tag control
+    def _enable_tag_follow(self, sample: TagSample) -> None:
+        self.tag_following = True
+        self._last_status = "tag follow on (absolute zero from the first valid tag)"
+        log.info(
+            "tag follow on at %.3f %.3f %.3f m (orientation zero latched)",
+            *sample.translation_m,
+        )
 
-    def _toggle_follow(self) -> None:
-        if self.following:
-            self.following = False
-            self._auto_follow_armed = False
-            self._last_status = "phone follow off; macro pose frozen"
-            return
-        sample = self.orientation.latest()
+    def _toggle_tag_follow(self) -> bool:
+        if self.tag_following:
+            self.tag_following = False
+            self._tag_auto_follow_armed = False
+            self._last_status = "tag orientation follow off; macro pose frozen"
+            return True
+        sample = self.tag.latest()
         if sample is None or not sample.ready:
-            self._last_status = "phone not ready; check phyphox remote access"
-            return
-        self._enable_follow(sample)
-
-    def _zero_phone(self) -> bool:
-        """Re-anchor the world frame at the current phone attitude."""
-        sample = self.orientation.latest()
-        if sample is None or not sample.ready:
-            self._last_status = "phone not ready; cannot zero (check phyphox)"
+            self._last_status = "tag not detected; point the tag at the Astra camera"
             return False
-        self._enable_follow(sample)
-        self._auto_follow_armed = False
-        self._last_status = "phone world frame set; hand aligned to phone"
-        pitch, roll, yaw = q_euler_deg(self.macro.zero_hand)
-        log.info("phone world frame set (hand p/r/y %+.1f %+.1f %+.1f)", pitch, roll, yaw)
+        if not self.tag_pose.initialized:
+            self.tag_pose.zero_orientation(sample, self.hand.macro_pose)
+        self.tag_following = True
+        self._last_status = "tag orientation follow on (absolute first-tag zero)"
+        return True
+
+    def _zero_tag(self, now: float) -> bool:
+        sample = self.tag.latest()
+        if sample is None or not sample.ready:
+            self._last_status = "tag not detected; cannot zero"
+            return False
+        self.tag_pose.zero(sample, now, self.hand.macro_pose)
+        self.tag_following = True
+        self._tag_auto_follow_armed = False
+        self._last_status = "tag world frame set; position and orientation re-zeroed"
         return True
 
     def _toggle_position(self) -> bool:
-        """Toggle world translation; re-enabling re-zeros at the current palm."""
-        if self.position is None:
-            self._last_status = "position control needs --source rgbd"
-            return False
-        if self.positioning:
-            self.positioning = False
-            self._last_status = "position follow off; base translation frozen"
+        now = self._clock()
+        if self.tag_positioning:
+            self.tag_positioning = False
+            self._last_status = "tag position follow off; base translation frozen"
             return True
-        self.positioning = True
-        if self.position.zero(self._clock()):
-            self._last_status = "position follow on; zeroed at current palm"
+        self.tag_positioning = True
+        sample = self.tag.latest()
+        if self.tag_pose.fixed_translation_zero:
+            self._last_status = "tag position follow on (fixed zero: center @ depth)"
+        elif sample is not None and sample.ready:
+            self.tag_pose.update_translation(sample, now, False)
+            self.tag_pose.zero_translation(now)
+            self._last_status = "tag position follow on; zeroed at the current tag"
         else:
-            self._last_status = "position follow on; zeroing at next depth sample"
+            self._last_status = "tag position follow on; waiting for a tag"
         return True
 
     def _reset(self) -> None:
         self.controller.reset()
-        if self.position is not None:
-            self.position.reset()
-            self.positioning = self.position_enabled
-        if self._depth_log is not None:
-            self._depth_log.clear()
-        self.following = False
-        self._auto_follow_armed = False
-        self.macro.reset()
+        self.tag_pose.reset()
+        self.tag_positioning = bool(self.config.position.enabled)
+        self.tag_following = False
+        self._tag_auto_follow_armed = bool(self.config.tag.auto_follow)
         self.hand.reset_macro_pose()
         self.hand.reset(self.start_ctrl)
         self.hand.reset_free_bodies()
+        self.hand.set_macro_pose(PALM_DOWN_QUAT, np.zeros(3, dtype=np.float64))
         mujoco.mj_forward(self.model, self.data)
-        self._last_status = "reset to start pose"
+        self._last_status = "reset to palm-down start pose"
 
     # ------------------------------------------------------------------ display
     def _fresh_observation(
@@ -451,74 +448,6 @@ class TeleopApp:
         if now - result.capture_ts > self.config.perception.max_age_s:
             return None
         return result.observations[0]
-
-    def _palm_measurement(
-        self,
-        observation: HandObservation | None,
-        now: float,
-    ) -> PalmMeasurement | None:
-        """Sample the palm for the freshest frame with depth and 2D landmarks.
-
-        The detector stage publishes its landmarks before HaMeR inference
-        finishes, so preferring that view lets the translation update at
-        detector rate instead of the slower inference rate.
-        """
-        if self._depth_log is None:
-            return None
-        candidates: list[tuple[int, float, np.ndarray | None]] = []
-        getter = getattr(self.perception, "latest_detection", None)
-        pending = getter() if callable(getter) else None
-        if pending is not None:
-            frame, detection = pending
-            if now - frame.capture_ts <= self.config.perception.max_age_s:
-                candidates.append((frame.seq, frame.capture_ts, detection.landmarks_2d))
-        if observation is not None:
-            keypoints = observation.detector_landmarks_2d
-            if keypoints is None:
-                keypoints = observation.keypoints_2d
-            candidates.append((observation.frame_seq, observation.capture_ts, keypoints))
-        for frame_seq, capture_ts, keypoints in candidates:
-            if keypoints is None:
-                continue
-            record = self._depth_log.get(frame_seq)
-            if record is None:
-                continue
-            if abs(record.depth_ts - record.color_ts) > self.config.position.max_depth_skew_s:
-                continue
-            return sample_palm_position(
-                record.depth_mm,
-                record.intrinsics,
-                keypoints,
-                mirrored=record.mirrored,
-                color_size=record.color_size,
-                cfg=self.config.position,
-                frame_seq=frame_seq,
-                capture_ts=capture_ts,
-                depth_ts=record.depth_ts,
-            )
-        return None
-
-    def _position_rotation(self, observation: HandObservation | None) -> np.ndarray | None:
-        """Camera-to-world rotation for anatomical, hand-relative translation.
-
-        The anatomical axes come from the last fresh 3D observation, while the
-        world rotation uses the current macro pose every frame.  Position
-        samples therefore keep their hand-relative direction even when they
-        arrive between HaMeR results.
-        """
-        if not self.config.position.hand_relative:
-            return None
-        if observation is not None:
-            axes = camera_to_local_axes(
-                observation.keypoints_3d,
-                observation.apparent_side,
-                observation.anatomical_side,
-            )
-            if axes is not None:
-                self._anatomy_axes = axes
-        if self._anatomy_axes is None:
-            return None
-        return hand_base_rotation(self.hand.macro_pose) @ self._anatomy_axes
 
     def _render(
         self,
@@ -547,45 +476,58 @@ class TeleopApp:
         lines.extend(self.telemetry.hud_lines())
         peaks = self.hand.peak_touch
         lines.append("touch " + " ".join(f"{name} {value:.2f}" for name, value in peaks.items()))
-        if self._phone_enabled:
-            health = self.orientation.health
-            follow = "on" if self.following else "off"
-            host = health.host or "-"
+
+        health = self.tag.health
+        sample = self.tag.latest()
+        lines.append(
+            f"tag {health.state} | cam {health.camera} {health.api} | "
+            f"{health.rate_hz:.0f} Hz | {health.message}"
+        )
+        translation = self.tag_pose.translation
+        lines.append(
+            f"tag pos {'on' if self.tag_positioning else 'off'} | "
+            f"{self.tag_pose.position_state} | "
+            f"t {translation[0]:+.2f} {translation[1]:+.2f} {translation[2]:+.2f} m"
+        )
+        lines.append(
+            f"tag rot {'on' if self.tag_following else 'off'} | "
+            f"{self.tag_pose.orientation_state}"
+        )
+        if sample is not None:
             lines.append(
-                f"phone {follow} | {health.state} | {host} | "
-                f"{health.rate_hz:.0f} Hz | {health.message}"
+                f"tag raw {sample.tag_id} | "
+                f"x {sample.translation_m[0]:+.2f} "
+                f"y {sample.translation_m[1]:+.2f} "
+                f"z {sample.translation_m[2]:+.2f} m"
             )
-            pitch, roll, yaw = q_euler_deg(self.macro.zero_hand)
-            lines.append(f"zero p/r/y {pitch:+5.1f} {roll:+5.1f} {yaw:+5.1f}")
-        if self.position is not None:
-            translation = self.position.output
-            follow = "on" if self.positioning else "off"
-            lines.append(
-                f"pos {follow} | {self.position.state} | "
-                f"t {translation[0]:+.2f} {translation[1]:+.2f} {translation[2]:+.2f} m"
-            )
-            camera = self.position.camera_position
-            if camera is not None:
-                lines.append(f"cam {camera[0]:+.2f} {camera[1]:+.2f} {camera[2]:+.2f} m")
-            depth_health = getattr(self.source, "depth_health", None)
-            if depth_health is not None:
-                lines.append(
-                    f"depth {depth_health.state} {depth_health.fps:.0f} Hz "
-                    f"{depth_health.message}".rstrip()
-                )
-        hints = []
-        if self._phone_enabled:
-            hints += ["[g]phone", "[0]zero"]
-        if self.position is not None:
-            hints += ["[p]pos"]
-        hints += ["[c]alibrate", "[r]reset", "[q]quit"]
+        pitch, roll, yaw = q_euler_deg(self.tag_pose.zero_hand)
+        if self.config.tag.zero_mode == "fixed":
+            zero_note = f"pos center@{self.config.tag.zero_distance_m:.2f}m"
+        else:
+            zero_note = "pos sample"
+        lines.append(
+            f"tag zero {zero_note} | rot p/r/y "
+            f"{pitch:+5.1f} {roll:+5.1f} {yaw:+5.1f}"
+        )
+
+        hints = ["[g]tagrot", "[0]tagzero", "[p]tagpos", "[c]alibrate", "[r]reset", "[q]quit"]
         lines.append(" ".join(hints))
         if extra:
             lines.extend(extra)
         if self._last_status:
             lines.append(self._last_status)
-        draw_hud(preview, lines)
+        ui_scale = max(1.0, preview.shape[1] / 960.0)
+        draw_hud(
+            preview,
+            lines,
+            scale=0.5 * ui_scale,
+            line_height=max(18, int(round(18 * ui_scale))),
+            thickness=max(1, int(round(ui_scale))),
+        )
 
+        tag_frame = self.tag.latest_preview()
+        if tag_frame is not None:
+            self.tag_preview.show(tag_frame, wait_key=False)
         key = self.preview.show(preview)
         if self.recorder is not None:
             try:
@@ -618,15 +560,16 @@ class TeleopApp:
         except Exception:
             log.exception("error closing perception")
         try:
-            self.orientation.close()
+            self.tag.close()
         except Exception:
-            log.exception("error closing phone source")
+            log.exception("error closing tag source")
         try:
             self.viewer.close()
         except Exception:
             log.exception("error closing viewer")
         try:
             self.preview.close()
+            self.tag_preview.close()
         except Exception:
             log.exception("error closing preview")
         if self.recorder is not None:
@@ -661,8 +604,6 @@ def apply_cli_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfi
             capture["camera"] = camera
     if get("mirror") is not None:
         capture["mirror"] = bool(get("mirror"))
-    if get("depth_sdk") is not None:
-        capture["depth_sdk"] = get("depth_sdk")
     config = _set(config, "capture", **capture)
 
     config = _set(
@@ -676,6 +617,7 @@ def apply_cli_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfi
     )
     if get("smooth") is not None:
         config = _set(config, "smoothing", tau=float(get("smooth")))
+
     position = {}
     if get("position") is not None:
         position["enabled"] = bool(get("position"))
@@ -685,15 +627,24 @@ def apply_cli_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfi
         position["gain"] = float(get("position_gain"))
     if get("position_deadzone") is not None:
         position["deadzone_m"] = float(get("position_deadzone"))
-    if get("position_max_offset") is not None:
-        position["max_offset_m"] = float(get("position_max_offset"))
     config = _set(config, "position", **position)
 
     config = _set(
         config,
-        "sim",
-        viewer=get("viewer"),
+        "tag",
+        camera=get("tag_camera"),
+        api=get("tag_api"),
+        family=get("tag_family"),
+        tag_id=get("tag_id"),
+        size_m=get("tag_size"),
+        mirror=get("tag_mirror"),
+        show=get("tag_show"),
+        zero_mode=get("tag_zero_mode"),
+        zero_distance_m=get("tag_zero_distance"),
+        auto_follow=get("tag_follow"),
     )
+
+    config = _set(config, "sim", viewer=get("viewer"))
     config = _set(
         config,
         "ui",
@@ -708,28 +659,6 @@ def apply_cli_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfi
         checkpoint=get("checkpoint"),
         hand_model=get("hand_model"),
         calibration=get("calibration"),
-    )
-    phone_host = get("phone_host")
-    phone_port = get("phone_port")
-    if phone_host is not None:
-        try:
-            parsed_host, parsed_port = parse_host_port(
-                phone_host, default_port=phone_port or config.phone.port
-            )
-        except ValueError as exc:
-            raise ConfigError(str(exc)) from exc
-        phone_host = parsed_host
-        if phone_port is None:
-            phone_port = parsed_port
-    config = _set(
-        config,
-        "phone",
-        source=get("phone"),
-        host=phone_host,
-        port=phone_port,
-        auto_discover=get("phone_scan"),
-        auto_follow=get("phone_follow"),
-        mount_preset=get("phone_mount"),
     )
     config = _set(
         config,

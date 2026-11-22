@@ -206,19 +206,43 @@ class ShadowHand:
             self.set_targets(ctrl)
 
     def reset_free_bodies(self) -> None:
-        """Restore every free-jointed world object (e.g. the grasp ball).
+        """Restore every non-hand world object to its initial pose.
 
-        Hand joints are left untouched; the caller decides when to reapply the
-        start pose.  The ball is meant to be knocked around, so ``r`` must put
-        it back on its stand as well.
+        The door hinge (and any future free body) is reset here. Hand joints are
+        left untouched; the caller decides when to reapply the start pose.
         """
+        qpos_sizes = {
+            int(mujoco.mjtJoint.mjJNT_FREE): 7,
+            int(mujoco.mjtJoint.mjJNT_BALL): 4,
+            int(mujoco.mjtJoint.mjJNT_HINGE): 1,
+            int(mujoco.mjtJoint.mjJNT_SLIDE): 1,
+        }
+        dof_sizes = {
+            int(mujoco.mjtJoint.mjJNT_FREE): 6,
+            int(mujoco.mjtJoint.mjJNT_BALL): 3,
+            int(mujoco.mjtJoint.mjJNT_HINGE): 1,
+            int(mujoco.mjtJoint.mjJNT_SLIDE): 1,
+        }
         for joint in range(self.model.njnt):
-            if int(self.model.jnt_type[joint]) != int(mujoco.mjtJoint.mjJNT_FREE):
+            jtype = int(self.model.jnt_type[joint])
+            if jtype not in qpos_sizes:
+                continue
+            body_id = int(self.model.jnt_bodyid[joint])
+            if self._body_in_hand(body_id):
                 continue
             qpos_adr = int(self.model.jnt_qposadr[joint])
             dof_adr = int(self.model.jnt_dofadr[joint])
-            self.data.qpos[qpos_adr : qpos_adr + 7] = self.model.qpos0[qpos_adr : qpos_adr + 7]
-            self.data.qvel[dof_adr : dof_adr + 6] = 0.0
+            qn = qpos_sizes[jtype]
+            dn = dof_sizes[jtype]
+            self.data.qpos[qpos_adr : qpos_adr + qn] = self.model.qpos0[qpos_adr : qpos_adr + qn]
+            self.data.qvel[dof_adr : dof_adr + dn] = 0.0
+
+    def _body_in_hand(self, body_id: int) -> bool:
+        while body_id > 0:
+            if body_id == self._forearm_id:
+                return True
+            body_id = int(self.model.body_parentid[body_id])
+        return False
 
     @property
     def qpos(self) -> np.ndarray:

@@ -7,7 +7,6 @@ records so that no mutable frame or keypoint array is shared across threads.
 
 from __future__ import annotations
 
-import math
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -43,29 +42,6 @@ class Side(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class DepthIntrinsics:
-    """Pinhole intrinsics of a depth image, in pixels."""
-
-    fx: float
-    fy: float
-    cx: float
-    cy: float
-    width: int
-    height: int
-
-    def __post_init__(self) -> None:
-        values = (self.fx, self.fy, self.cx, self.cy)
-        if not all(math.isfinite(value) for value in values):
-            raise ValueError("depth intrinsics must be finite")
-        if self.fx <= 0.0 or self.fy <= 0.0:
-            raise ValueError("depth focal lengths must be positive")
-        if self.width <= 0 or self.height <= 0:
-            raise ValueError("depth image size must be positive")
-        if not 0.0 <= self.cx < self.width or not 0.0 <= self.cy < self.height:
-            raise ValueError("depth principal point must lie inside the image")
-
-
-@dataclass(frozen=True, slots=True)
 class FramePacket:
     """One captured frame, already mirrored exactly once if requested."""
 
@@ -74,9 +50,6 @@ class FramePacket:
     image_bgr: np.ndarray
     mirrored: bool = False
     source_fps: float | None = None
-    depth_mm: np.ndarray | None = None
-    depth_intrinsics: DepthIntrinsics | None = None
-    depth_ts: float | None = None
 
     def __post_init__(self) -> None:
         if self.seq < 0:
@@ -86,29 +59,6 @@ class FramePacket:
         if self.image_bgr.dtype != np.uint8:
             raise TypeError(f"expected uint8 image, got {self.image_bgr.dtype}")
         self.image_bgr.setflags(write=False)
-
-        depth_fields = (self.depth_mm, self.depth_intrinsics, self.depth_ts)
-        if any(value is not None for value in depth_fields):
-            if any(value is None for value in depth_fields):
-                raise ValueError(
-                    "depth_mm, depth_intrinsics, and depth_ts must be provided together"
-                )
-            depth = np.asarray(self.depth_mm)
-            if depth.ndim != 2:
-                raise ValueError(f"expected HxW depth image, got {depth.shape}")
-            if depth.dtype != np.uint16:
-                raise TypeError(f"expected uint16 depth image, got {depth.dtype}")
-            intrinsics = self.depth_intrinsics
-            if intrinsics.width != depth.shape[1] or intrinsics.height != depth.shape[0]:
-                raise ValueError(
-                    "depth intrinsics size "
-                    f"{intrinsics.width}x{intrinsics.height} does not match "
-                    f"{depth.shape[1]}x{depth.shape[0]}"
-                )
-            if not math.isfinite(float(self.depth_ts)):
-                raise ValueError("depth_ts must be finite")
-            depth.setflags(write=False)
-            object.__setattr__(self, "depth_mm", depth)
 
     @property
     def width(self) -> int:
