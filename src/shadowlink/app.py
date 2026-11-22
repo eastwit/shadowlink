@@ -1,7 +1,8 @@
 """Application orchestration: camera -> perception -> retarget -> MuJoCo.
 
-Whole-hand position and orientation come from a hand-held AprilTag. The
-built-in camera continues to reconstruct the fingers.
+Whole-hand translation and yaw come from a hand-held AprilTag; optional
+phyphox phone samples supply the two tilt axes. One camera can feed both finger
+perception and tag detection when ``capture.source=tag``.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from shadowlink.sim.model import load_model, load_start_pose
 from shadowlink.sim.shadow_hand import ShadowHand
 from shadowlink.sim.stepping import FixedStepClock
 from shadowlink.sim.viewer import Viewer
-from shadowlink.tag import TagControlSettings, TagPoseController, TagService, TagSample
+from shadowlink.tag import TagControlSettings, TagPoseController, TagSample, TagService
 from shadowlink.tag.source import TagFrameSource
 from shadowlink.types import HandObservation, PerceptionResult
 from shadowlink.ui.overlay import draw_hud, draw_observation
@@ -107,9 +108,7 @@ class TeleopApp:
         self.tag: TagService = (
             tag_source if tag_source is not None else TagService(config.tag, clock=clock)
         )
-        self._phone_enabled = (
-            phone_source is not None or config.phone.source != "none"
-        )
+        self._phone_enabled = phone_source is not None or config.phone.source != "none"
         phone_config = config.phone
         if phone_source is not None:
             self.phone = phone_source
@@ -268,12 +267,8 @@ class TeleopApp:
                     )
                 ):
                     if self.tag_pose.phone_configured:
-                        self._last_status = (
-                            "absolute tag+phone orientation zero captured"
-                        )
-                        log.info(
-                            "orientation zero captured (tag blue-axis yaw + phone yaw/pitch)"
-                        )
+                        self._last_status = "absolute tag+phone orientation zero captured"
+                        log.info("orientation zero captured (tag blue-axis yaw + phone yaw/pitch)")
                     else:
                         self._last_status = "absolute tag orientation zero captured"
                 if (
@@ -584,8 +579,7 @@ class TeleopApp:
             f"t {translation[0]:+.2f} {translation[1]:+.2f} {translation[2]:+.2f} m"
         )
         lines.append(
-            f"tag rot {'on' if self.tag_following else 'off'} | "
-            f"{self.tag_pose.orientation_state}"
+            f"tag rot {'on' if self.tag_following else 'off'} | {self.tag_pose.orientation_state}"
         )
         if sample is not None:
             lines.append(
@@ -599,10 +593,7 @@ class TeleopApp:
             zero_note = f"pos center@{self.config.tag.zero_distance_m:.2f}m"
         else:
             zero_note = "pos sample"
-        lines.append(
-            f"tag zero {zero_note} | rot p/r/y "
-            f"{pitch:+5.1f} {roll:+5.1f} {yaw:+5.1f}"
-        )
+        lines.append(f"tag zero {zero_note} | rot p/r/y {pitch:+5.1f} {roll:+5.1f} {yaw:+5.1f}")
 
         if self._phone_enabled:
             ph = self.phone.health

@@ -1,6 +1,7 @@
 # ShadowLink
 
-**Track fingers with a built-in camera and drive the whole Shadow Hand pose with a hand-held AprilTag in MuJoCo.**
+**Track fingers and drive the whole Shadow Hand from one RGB camera, a hand-held
+AprilTag, and an optional phyphox phone for stable tilt.**
 
 ShadowLink reconstructs a human hand from a single RGB image and maps continuous
 joint motion onto the Shadow Hand E3M5's 20 actuators. The scene contains 120
@@ -8,9 +9,11 @@ fingertip tactile taxels coloured by contact force. There is no gesture
 classification: every frame computes finger flexion, spread, and thumb
 opposition continuously.
 
-The whole-hand base is controlled by a hand-held AprilTag (36h11 / ID 5 / 57 mm
-by default). An Astra RGB camera watches the tag while the built-in camera keeps
-driving finger perception.
+The whole-hand base uses a hand-held AprilTag (36h11 / ID 5 / 57 mm by default)
+for translation and stable blue-axis yaw. The two noisier tag tilt axes can be
+replaced by a phone running phyphox on the hand. In the recommended setup one
+Plugcam/IP Webcam feed is shared by hand perception and tag detection, so no
+second camera is required.
 
 ## Features
 
@@ -21,16 +24,20 @@ driving finger perception.
   thumb opposition), not discrete gestures.
 - **Two-stage asynchronous perception**: detection and HaMeR inference run in
   separate latest-value threads; the physics loop never waits.
-- **AprilTag whole-hand 6-DoF**: a dedicated Astra thread publishes tag pose.
-  Translation and rotation drive the hand base relative to a zero pose; the
-  first detection zeroes automatically. `g`/`p` toggle orientation/translation,
-  `0` re-zeros both. Missing tags freeze the hand instead of snapping back.
+- **AprilTag + phone whole-hand pose**: the tag supplies translation and
+  blue-axis yaw; an optional phyphox phone supplies yaw+pitch for the two noisy
+  tilt axes and its screen-normal roll is discarded. `m` cycles eight phone
+  mount mappings live. Without a phone, the tag supplies full orientation.
+- **One-camera mode**: `capture.source: tag` reuses the tag camera's raw frames
+  for HaMeR/MediaPipe, so the same Plugcam/IP Webcam view drives both fingers and
+  tag pose.
 - **Stable control**: One-Euro filtering, quaternion slerp, slew limiting, and a
   `waiting → tracking → lost` state machine with a rate-limited return.
 - **Persistent calibration** for the finger neutral pose, per backend.
 - **Tactile simulation**: 120 taxels (5 fingers × 6 × 4), blue→red.
-- **Tabletop scene**: a table under the hand with a free graspable block.
-  The hand starts palm-down above the surface; `r` restores the block.
+- **Tabletop scene**: a table under the hand with a free 5 cm, 10 g block.
+  The hand starts palm-down above the surface; `r` restores the block. Hand and
+  block contacts use high friction and stiff `solimp`/`solref` settings.
 - **Headless-friendly**: `--no-show --no-viewer`, synthetic frame sources, and a
   unit suite that needs no GPU, camera, or weights.
 - **No path hacks**: no `os.chdir`, no `sys.path.insert`, no hard-coded user
@@ -47,7 +54,8 @@ driving finger perception.
 | AprilTag | `pupil-apriltags` (official AprilTag 3 C library binding, core dependency) |
 | HaMeR backend | PyTorch 2.0–2.5, CUDA optional but strongly recommended |
 | GPU | Any CUDA GPU; measurements below use an RTX 4060 Laptop |
-| Cameras | built-in/UVC webcam for fingers + Orbbec Astra RGB for the tag |
+| Cameras | one UVC camera shared by fingers and tag (Plugcam/IP Webcam), or built-in + Astra in two-camera mode |
+| Phone (optional) | [phyphox](https://phyphox.org) with Remote Access on the hand for stable tilt |
 
 Windows 11 and Linux are supported. The MuJoCo viewer and OpenCV preview are
 optional.
@@ -127,16 +135,12 @@ the MJCF/tactile assets.
 ## Quick start
 
 ```bash
-# Built-in camera + HaMeR + Astra tag + MuJoCo viewer
-shadowlink run --backend hamer --data-dir D:/models/hamer/_DATA
-
-# One phone: Plugcam supplies frames for both hands and the tag
+# Recommended: one Plugcam/IP Webcam + phyphox phone + HaMeR + MuJoCo viewer
 shadowlink run --config configs/plugcam_hand_tag.yaml --backend hamer \
   --data-dir D:/models/hamer/_DATA
 
-# Two-phone setup: IP Webcam for hands + Plugcam for the tag
-shadowlink run --config configs/ipwebcam_plugcam.yaml --backend hamer \
-  --data-dir D:/models/hamer/_DATA
+# Two-camera fallback: built-in camera for fingers + Astra RGB for the tag
+shadowlink run --backend hamer --data-dir D:/models/hamer/_DATA
 
 # CPU finger fallback
 shadowlink run --backend mediapipe --data-dir D:/models/hamer/_DATA
@@ -149,12 +153,15 @@ shadowlink run --source video --camera demo.mp4 --backend hamer \
 shadowlink demo
 ```
 
-Default camera indices:
+Default `configs/default.yaml` (two-camera fallback) indices:
 
 | Index | Device | Role |
 | --- | --- | --- |
 | `0` | Astra Pro HD Camera | tag camera |
 | `1` | built-in HD Webcam | finger camera |
+
+The recommended `configs/plugcam_hand_tag.yaml` uses DirectShow index `1`
+(Plugcam) for **both** roles. List your own indices with the command below.
 
 `configs/plugcam_hand_tag.yaml` is the single-camera profile. It sets
 `capture.source: tag`, so the `TagService` camera becomes the only frame source:
@@ -180,13 +187,11 @@ phone:
 ```
 
 `mount_preset=yaw_pitch` maps the phone's yaw/pitch onto the hand's two non-yaw
-axes. If your phone is mounted differently, use `back`, `in_hand`, or
-`custom` with `mount_w/x/y/z`. The HUD shows the phone rate and tilt state;
-`g` still toggles orientation follow, and `0` re-zeroes tag and phone together.
-
-`configs/ipwebcam_plugcam.yaml` uses the older two-phone setup: IP Webcam at
-`http://192.168.1.109:8080/video` for hands and Plugcam at DirectShow index `1`
-for the tag. Update those two values when the phone IP or enumeration changes.
+axes. The default is the `swap-d` direction combination. If your phone is
+mounted differently, press `m` to cycle all eight mappings live or set
+`phone.mount_preset`/`mount_w/x/y/z`. The HUD shows the phone rate, tilt state,
+and active mount name. `g` still toggles orientation follow, and `0` re-zeroes
+tag and phone together. See [docs/PHONE.md](docs/PHONE.md) for details.
 
 If Windows enumerates cameras differently, change `capture.camera` /
 `tag.camera` in the config, or pass `--camera` / `--tag-camera`.
@@ -238,19 +243,24 @@ Priority: **CLI / `--set` > `--config` YAML > dataclass defaults**.
 ## How it works
 
 ```text
-built-in camera ──► FramePacket ──► MediaPipe detector ──► HaMeR inference
-                                             │
-                                             ▼
-                              21 joints → flexion/spread/opposition
-                                             ▼
-                     One-Euro → slew limit → 20 actuator targets
-
-Astra RGB ──► AprilTag thread ──► 6-DoF relative zero → pos + orientation
-                                             ▼
-                     ShadowHand.set_macro_pose (whole-hand base)
-                                             ▼
-                     MuJoCo fixed-step physics + 120 taxels + viewer
+Plugcam/IP Webcam ──► FramePacket ──► MediaPipe detector ──► HaMeR inference
+        │                                    │
+        │                                    ▼
+        │                     21 joints → flexion/spread/opposition
+        │                                    ▼
+        │                    One-Euro → slew limit → 20 actuator targets
+        │
+        └──► AprilTag thread ──► translation + blue-axis yaw
+                                        │
+phyphox phone ──► yaw + pitch ─────────┤
+                                        ▼
+                    ShadowHand.set_macro_pose (whole-hand base)
+                                        ▼
+                MuJoCo fixed-step physics + 120 taxels + viewer
 ```
+
+The built-in + Astra two-camera layout feeds the same two branches through
+separate capture threads.
 
 Key invariants:
 
@@ -259,9 +269,12 @@ Key invariants:
   the newest result.
 - The tag service publishes into an independent latest-value slot; the loop never
   blocks on its camera or detector, and freezes when the sample goes stale.
-- Left hands are canonicalised for retargeting. The left Shadow Hand is not
-  driven in v0.1.
-- Astra's RGB stream is horizontally mirrored; `tag.mirror: auto` corrects it.
+- The phone service is a separate HTTP polling thread; a stale phone freezes
+  orientation while tag translation continues.
+- Left hands are canonicalised for retargeting. The simulated Shadow Hand is the
+  right hand.
+- Phone and UVC streams may be horizontally mirrored; `tag.mirror: auto`
+  corrects the tag camera.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module boundaries and
 threading.
@@ -278,27 +291,31 @@ The neutral file is stored at `%APPDATA%\ShadowLink\calibration.json` on Windows
 or `~/.config/shadowlink/calibration.json` on Linux. It is tied to the backend
 and hand side.
 
-## AprilTag whole-hand 6-DoF
+## Whole-hand pose: AprilTag + phone
 
 - Print or display `src/shadowlink/assets/apriltag/tag36h11_id5.png` **without
   mirroring**.
 - `size.md` and the config default are 57 mm (black-border edge).
-- A separate **AprilTag Detection** window shows the Astra feed, tag outline,
+- A separate **AprilTag Detection** window shows the camera feed, tag outline,
   coordinate axes, ID, distance, mirror state, and detection rate. Hide it with
   `--no-tag-show`.
-- The tag camera defaults to DSHOW at 640×480 (~20 FPS). DSHOW is more reliable
-  for Astra than MSMF; `--tag-api msmf` can reach ~30 FPS but may open slowly.
+- The tag camera defaults to DSHOW at 640×480. The Plugcam profile uses
+  1920×1080 with `quad_decimate: 2.0`. DSHOW is more reliable than MSMF.
 - Translation zero defaults to the **image center at 1.00 m depth**
   (`tag.zero_mode: fixed`, `tag.zero_distance_m: 1.0`). Hold the tag near that
   point for a neutral hand offset. The orientation zero is latched from the
-  **first valid tag** and stays absolute for the session; `g` only toggles
-  following. `p` toggles translation, `0` explicitly re-zeroes orientation and
-  resets fixed translation, and `r` resets everything. Set
+  first valid tag+phone pair and stays absolute for the session; `g` only
+  toggles following. `p` toggles translation, `0` explicitly re-zeroes
+  orientation and resets fixed translation, and `r` resets everything. Set
   `tag.zero_mode: sample` to use the first tag position instead.
+- With `phone.source: phyphox`, the tag contributes only blue-axis yaw while
+  the phone supplies the two tilt axes. Press `m` to cycle phone mounts if the
+  axes feel swapped or reversed. See [docs/PHONE.md](docs/PHONE.md).
 - Initial hand pose: **palm down**, middle finger toward the block (+world x).
 - Tag axes: **X+** = forward / middle finger, **Y+** = right, **Z+** = palm
-  direction, **Z−** = up. Rotation mapping: **green → roll**, **red → pitch**,
-  **blue → yaw**, so the three axes stay independent.
+  direction, **Z−** = up. Without a phone, full tag rotation maps **green →
+  roll**, **red → pitch**, **blue → yaw**. With a phone, only blue → yaw is
+  taken from the tag.
 - Translation uses the `overhead` preset: tag moving **right** moves the hand
   toward the block (+world x), and tag moving **closer** to the overhead
   camera moves the hand up (+world z).
@@ -372,7 +389,8 @@ src/shadowlink/
 ├── cli.py                argparse entry point
 ├── math3d.py             NumPy-only quaternion helpers
 ├── perception/           MediaPipe detector, HaMeR backend, worker, selector
-├── tag/                  AprilTag camera thread and relative 6-DoF controller
+├── tag/                  AprilTag camera thread, shared-frame source, controller
+├── phone/                phyphox HTTP client, poller, yaw/pitch tilt mapping
 ├── retarget/             geometry, mapping, smoothing, calibration
 ├── sim/                  MJCF loading, Shadow Hand, fixed-step clock, viewer
 ├── ui/                   overlay, telemetry, OpenCV window/recorder
@@ -386,9 +404,10 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues.
 
 ShadowLink's own code is MIT. HaMeR is a MIT submodule; the Shadow Hand assets
 come from MuJoCo Menagerie / Shadow Robot (Apache-2.0); MediaPipe is Apache-2.0;
-AprilTag is BSD-2-Clause through the `pupil-apriltags` binding. MANO and the
-HaMeR checkpoint are **not** redistributed and remain under their own licences.
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+AprilTag is BSD-2-Clause through the `pupil-apriltags` binding. phyphox is an
+optional third-party phone app and is not bundled. MANO and the HaMeR checkpoint
+are **not** redistributed and remain under their own licences. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Citation
 

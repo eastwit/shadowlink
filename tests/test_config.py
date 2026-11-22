@@ -75,8 +75,7 @@ def test_yaml_relative_paths_resolve_against_the_file(tmp_path):
     config_path = tmp_path / "nested" / "config.yaml"
     config_path.parent.mkdir()
     config_path.write_text(
-        "capture:\n  source: video\n  video: clips/demo.mp4\n"
-        "data:\n  data_dir: models\n",
+        "capture:\n  source: video\n  video: clips/demo.mp4\ndata:\n  data_dir: models\n",
         encoding="utf-8",
     )
     config = AppConfig.from_yaml(config_path)

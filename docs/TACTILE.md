@@ -63,7 +63,7 @@ newline translation, so `--check` is stable across Windows and Linux checkouts.
 ```text
 assets/shadow_hand/
 ├── right_hand.xml          # includes tactile/ff_sites.xml ... th_sites.xml
-├── left_hand.xml           # no tactile includes in v0.1
+├── left_hand.xml           # no tactile includes in the current scene
 ├── shadowlink_scene.xml    # the scene loaded by the app
 ├── tactile/
 │   ├── ff_sites.xml ... th_sites.xml

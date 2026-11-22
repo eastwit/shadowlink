@@ -4,13 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shadowlink"
-version = "0.1.0"
+version = "0.2.0"
 description = "Monocular hand teleoperation of a Shadow Hand in MuJoCo"
 readme = "README.md"
 requires-python = ">=3.10,<3.11"
 license = { text = "MIT" }
 authors = [{ name = "ShadowLink contributors" }]
-keywords = ["mujoco", "shadow-hand", "teleoperation", "hand-pose", "hamer", "mediapipe"]
+keywords = [
+  "mujoco",
+  "shadow-hand",
+  "teleoperation",
+  "hand-pose",
+  "hamer",
+  "mediapipe",
+  "apriltag",
+  "phyphox",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",

@@ -156,12 +156,8 @@ def test_hybrid_controller_keeps_tag_yaw_and_phone_yaw_pitch():
 
     # Tag pitch alone is ignored; only its blue-axis twist is used.
     tag_pitch = q_from_axis_angle([1.0, 0.0, 0.0], math.radians(35.0))
-    controller.update_orientation(
-        tag_sample(tag_pitch, ts=1.04), 1.04, True, phone_sample=p0
-    )
-    out = controller.update_orientation(
-        tag_sample(tag_pitch, ts=1.05), 1.05, True, phone_sample=p0
-    )
+    controller.update_orientation(tag_sample(tag_pitch, ts=1.04), 1.04, True, phone_sample=p0)
+    out = controller.update_orientation(tag_sample(tag_pitch, ts=1.05), 1.05, True, phone_sample=p0)
     assert out is not None
     assert q_angle_between(out, q_from_axis_angle([0.0, 0.0, 1.0], 0.0)) < 1e-6
 

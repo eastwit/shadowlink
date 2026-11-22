@@ -1,10 +1,10 @@
 """Background AprilTag camera service.
 
-The tag camera is deliberately independent from ShadowLink's hand camera.
 A daemon thread opens the configured UVC device, detects one AprilTag 3 pose
 per frame (official AprilTag C library through ``pupil-apriltags``), and
-publishes an immutable latest-value sample.  The main teleoperation loop never
-blocks on camera I/O or detection.
+publishes an immutable latest-value sample plus the corrected raw frame. The
+raw frame lets ``capture.source=tag`` share one camera with hand perception.
+The main teleoperation loop never blocks on camera I/O or detection.
 
 Astra's RGB stream is horizontally mirrored on this machine.  ``mirror=auto``
 tries the normal image first and flips it only when that is required for a
@@ -13,6 +13,7 @@ valid tag decode, so the published pose is in the corrected camera frame.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import threading
@@ -127,17 +128,13 @@ def _open_camera(cfg: TagConfig) -> tuple[cv2.VideoCapture, int, int]:
             "close other camera apps or change tag.camera/tag.api"
         )
     try:
-        try:
+        with contextlib.suppress(cv2.error):
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        except cv2.error:
-            pass
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
         cap.set(cv2.CAP_PROP_FPS, cfg.fps)
-        try:
+        with contextlib.suppress(cv2.error):
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        except cv2.error:
-            pass
 
         frame = None
         for _ in range(8):
@@ -208,11 +205,7 @@ class TagService:
         self._seq = 0
         self._rate_times.clear()
         self._mirror_state = (
-            True
-            if self.config.mirror == "on"
-            else False
-            if self.config.mirror == "off"
-            else None
+            True if self.config.mirror == "on" else False if self.config.mirror == "off" else None
         )
         self._set_health(
             TagHealth(
@@ -295,7 +288,7 @@ class TagService:
                 except ImportError as exc:
                     raise TagError(
                         "pupil-apriltags is missing; reinstall ShadowLink with "
-                        "`pip install -e \".[dev]\"`"
+                        '`pip install -e ".[dev]"`'
                     ) from exc
                 try:
                     detector = Detector(
@@ -366,11 +359,7 @@ class TagService:
                 K_frame = K_mirror
             else:
                 K_frame = K
-            gray = (
-                frame
-                if frame.ndim == 2
-                else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            )
+            gray = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
             poses = self._detect(detector, gray, K_frame)
             if self._mirror_state is None:
@@ -501,11 +490,7 @@ class TagService:
         poses: list[TagPoseTuple],
         best: TagPoseTuple | None,
     ) -> None:
-        image = (
-            frame
-            if frame.ndim == 3
-            else cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        )
+        image = frame if frame.ndim == 3 else cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         preview = image.copy()
         visual_scale = max(1.0, preview.shape[1] / 960.0)
         outline = max(2, int(round(2 * visual_scale)))

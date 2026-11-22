@@ -1,13 +1,15 @@
 # ShadowLink
 
-**用内置摄像头识别手指，用手持 AprilTag 控制整手位置和朝向，在 MuJoCo 中遥操作 Shadow Hand。**
+**用一个 RGB 相机识别手指，用手持 AprilTag 和可选的 phyphox 手机控制整手位姿，
+在 MuJoCo 中遥操作 Shadow Hand。**
 
 ShadowLink 从单张 RGB 图像重建人手姿态，并把连续的关节运动映射到 Shadow Hand E3M5
 的 20 个执行器上。仿真中包含 120 个指腹触觉单元，并实时用颜色显示接触力。
 项目**不做手势分类**：每帧都根据关节弯曲、手指张开和拇指对掌连续计算目标。
 
-整手基座使用一个手持 AprilTag（默认 36h11 / ID 5 / 57 mm）。Astra 彩色相机
-跟踪 tag，内置摄像头继续识别手指；tag 的位置和姿态相对于零点驱动整只手。
+整手基座使用手持 AprilTag（默认 36h11 / ID 5 / 57 mm）提供平移和稳定的蓝轴 yaw；
+tag 较噪的两个倾斜轴可由手上运行的 phyphox 手机提供。推荐配置下，同一个
+Plugcam/IP Webcam 画面同时用于手指识别和 tag 检测，不需要第二个相机。
 
 ## 功能
 
@@ -16,14 +18,18 @@ ShadowLink 从单张 RGB 图像重建人手姿态，并把连续的关节运动�
   - **MediaPipe**（CPU 后备）：使用 `hand_world_landmarks`，不需要 CUDA 或 MANO。
 - **连续重定向**：基于掌面几何计算 MCP/PIP/DIP 弯曲、手指张开和拇指对掌。
 - **两阶段异步感知**：检测与 HaMeR 推理分别在独立线程中运行，物理循环不等待模型。
-- **AprilTag 整手 6DoF**：独立 Astra 相机线程；tag 平移和旋转共同驱动整手基座，
-  首次检测自动对零，`g`/`p` 分别开关朝向/平移，`0` 重新对零。tag 丢失后冻结。
+- **AprilTag + 手机整手位姿**：tag 提供平移和蓝轴 yaw；可选 phyphox 手机提供
+  yaw+pitch 控制两个较噪的倾斜轴，屏幕法向量方向的 roll 被丢弃。按 `m` 可在线
+  循环 8 种手机轴向映射；没有手机时回退到 tag 完整朝向。
+- **单相机模式**：`capture.source: tag` 直接复用 tag 相机的原始帧给
+  HaMeR/MediaPipe，同一个 Plugcam/IP Webcam 画面同时驱动手指和 tag 位姿。
 - **稳定控制**：One-Euro 滤波、四元数 slerp、速度限幅、`waiting → tracking → lost`
   状态机，以及失手后按速度回到中位。
 - **可持久化的校准**：采集张开手的零点姿态，按后端保存并在进程重启后校验。
 - **触觉仿真**：120 个触觉点（5 指 × 6 × 4），按力大小从蓝色渐变到红色。
-- **桌面场景**：手下方有一张桌子，桌面上放着一个可抓取的自由方块。
-  手初始为手心朝下、位于桌面上方；按 `r` 复位方块。
+- **桌面场景**：手下方有一张桌子，桌面上放着一个 5 cm、10 g 的可抓取方块。
+  手初始为手心朝下、位于桌面上方；按 `r` 复位方块。手和方块使用高摩擦和
+  较硬的 `solimp`/`solref` 接触参数。
 - **适合无头环境**：`--no-show --no-viewer`、合成帧源，以及不需要 GPU、
   摄像头或权重的单元测试。
 - **无路径 hack**：不使用 `os.chdir`、`sys.path.insert`，不写死用户目录，
@@ -40,7 +46,8 @@ ShadowLink 从单张 RGB 图像重建人手姿态，并把连续的关节运动�
 | AprilTag | `pupil-apriltags`（官方 AprilTag 3 C 库绑定，随基础依赖安装） |
 | HaMeR 后端 | PyTorch 2.0–2.5，建议使用 CUDA |
 | GPU | 任意 CUDA GPU；下文数据来自 RTX 4060 Laptop |
-| 摄像头 | 内置/普通 UVC 摄像头（手指） + Orbbec Astra 彩色流（tag） |
+| 摄像头 | 一个 UVC 相机同时负责手指和 tag（Plugcam/IP Webcam），或双相机模式下内置相机 + Astra |
+| 手机（可选） | 运行 [phyphox](https://phyphox.org) 并开启 Remote Access，放在手上提供稳定倾斜 |
 
 支持 Windows 11 和 Linux。MuJoCo viewer 与 OpenCV 预览均可关闭。
 
@@ -118,16 +125,12 @@ shadowlink doctor --data-dir D:/models/hamer/_DATA --strict-models
 ## 快速开始
 
 ```bash
-# 内置摄像头 + HaMeR + Astra tag + MuJoCo viewer
-shadowlink run --backend hamer --data-dir D:/models/hamer/_DATA
-
-# 单相机：Plugcam 同时提供手势和 tag 画面
+# 推荐：单 Plugcam/IP Webcam + phyphox 手机 + HaMeR + MuJoCo viewer
 shadowlink run --config configs/plugcam_hand_tag.yaml --backend hamer \
   --data-dir D:/models/hamer/_DATA
 
-# 双手机：IP Webcam 做手势 + Plugcam 做 tag
-shadowlink run --config configs/ipwebcam_plugcam.yaml --backend hamer \
-  --data-dir D:/models/hamer/_DATA
+# 双相机后备：内置相机识别手指 + Astra 彩色流检测 tag
+shadowlink run --backend hamer --data-dir D:/models/hamer/_DATA
 
 # 纯 CPU 手指后备
 shadowlink run --backend mediapipe --data-dir D:/models/hamer/_DATA
@@ -140,12 +143,15 @@ shadowlink run --source video --camera demo.mp4 --backend hamer \
 shadowlink demo
 ```
 
-默认相机索引：
+`configs/default.yaml`（双相机后备）默认索引：
 
 | 索引 | 设备 | 角色 |
 | --- | --- | --- |
 | `0` | Astra Pro HD Camera | tag 相机 |
 | `1` | 内置 HD Webcam | 手指相机 |
+
+推荐的 `configs/plugcam_hand_tag.yaml` 使用 DirectShow 索引 `1`（Plugcam）
+同时承担这两个角色。用下面的命令查看本机索引。
 
 `configs/plugcam_hand_tag.yaml` 是单相机配置：设置 `capture.source: tag` 后，
 `TagService` 的相机会成为唯一画面来源。每一帧原始图像会同时送给
@@ -168,13 +174,10 @@ phone:
 ```
 
 `mount_preset=yaw_pitch` 会把手机的 yaw/pitch 映射到灵巧手除 yaw 外的两个
-轴。手机安装方式不同时可改用 `back`、`in_hand`，或自定义 `mount_w/x/y/z`。
-HUD 会显示手机状态和采样率；`g` 仍然开关朝向跟随，`0` 会同时重置 tag
-和手机的零点。
-
-`configs/ipwebcam_plugcam.yaml` 是原来的双手机配置：IP Webcam
-`http://192.168.1.109:8080/video` 做手势，Plugcam 使用 DirectShow 索引 `1`
-做 tag。手机 IP 或相机索引变化时改这两个值即可。
+轴，默认使用 `swap-d` 方向组合。手机安装方式不同时可按 `m` 在线循环 8 种
+映射，或修改 `phone.mount_preset` / `mount_w/x/y/z`。HUD 会显示手机状态、
+采样率和当前 mount 名称；`g` 仍然开关朝向跟随，`0` 会同时重置 tag 和手机
+的零点。详细说明见 [docs/PHONE.md](docs/PHONE.md)。
 
 如果 Windows 顺序不同，修改配置文件里的 `capture.camera` / `tag.camera`，
 或使用 `--camera` / `--tag-camera`。查看设备列表：
@@ -225,27 +228,32 @@ python -c "from pygrabber.dshow_graph import FilterGraph; print(list(enumerate(F
 ## 工作原理
 
 ```text
-内置摄像头 ──► FramePacket ──► MediaPipe 检测线程 ──► HaMeR 推理线程
-                                             │
-                                             ▼
-                              21 关节 → 弯曲/张开/对掌
-                                             ▼
-                     One-Euro → 速度限幅 → 20 维执行器目标
-
-Astra 彩色流 ──► AprilTag 线程 ──► 6DoF 相对零点 → 位置 + 朝向
-                                             ▼
-                     ShadowHand.set_macro_pose（整手基座）
-                                             ▼
-                     MuJoCo 固定步长物理 + 120 触觉 + viewer/预览
+Plugcam/IP Webcam ──► FramePacket ──► MediaPipe 检测线程 ──► HaMeR 推理线程
+        │                                    │
+        │                                    ▼
+        │                     21 关节 → 弯曲/张开/对掌
+        │                                    ▼
+        │                    One-Euro → 速度限幅 → 20 维执行器目标
+        │
+        └──► AprilTag 线程 ──► 平移 + 蓝轴 yaw
+                                        │
+phyphox 手机 ──► yaw + pitch ───────────┤
+                                        ▼
+                    ShadowHand.set_macro_pose（整手基座）
+                                        ▼
+                MuJoCo 固定步长物理 + 120 触觉 + viewer/预览
 ```
+
+内置相机 + Astra 的双相机模式通过独立采集线程进入同样的两条分支。
 
 关键约定：
 
 - 帧对象是不可变 dataclass，采集缓冲区不会跨线程被修改。
 - 感知结果带 `frame_seq`、`capture_ts`、`finished_ts`；主循环只读最新结果。
 - tag 服务有独立最新值槽位，主循环从不等待相机或检测；tag 过期时冻结。
-- 左手会被镜像规范化后再重定向。v0.1 不驱动左手 Shadow Hand 模型。
-- Astra 的 RGB 输出是水平镜像的，`tag.mirror: auto` 会自动翻转。
+- 手机服务是独立的 HTTP 轮询线程；手机过期时冻结朝向，tag 平移继续工作。
+- 左手会被镜像规范化后再重定向；仿真的 Shadow Hand 是右手。
+- 手机和 UVC 画面都可能水平镜像；tag 相机由 `tag.mirror: auto` 自动纠正。
 
 模块边界和线程模型见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
@@ -260,24 +268,26 @@ shadowlink calibrate --backend hamer --data-dir D:/models/hamer/_DATA
 零点数据保存在 Windows 的 `%APPDATA%\ShadowLink\calibration.json`，或 Linux 的
 `~/.config/shadowlink/calibration.json`。校准与后端和左右手绑定。
 
-## AprilTag 整手 6DoF
+## 整手位姿：AprilTag + 手机
 
 - 打印/显示 `src/shadowlink/assets/apriltag/tag36h11_id5.png`，**不要镜像**。
 - `size.md` 与配置默认值都是 57 mm（按黑色边框边长）。
-- 会单独弹出 **AprilTag Detection** 窗口，显示 Astra 画面、tag 轮廓、坐标轴、
+- 会单独弹出 **AprilTag Detection** 窗口，显示相机画面、tag 轮廓、坐标轴、
   ID、距离、镜像状态和检测帧率；用 `--no-tag-show` 可以关闭。
-- 相机默认 DSHOW、640×480，约 20 FPS；DSHOW 比 Astra 的 MSMF 打开更可靠。
-  需要更高帧率可试 `--tag-api msmf`，但打开可能很慢。
+- tag 相机默认 DSHOW、640×480；Plugcam 配置使用 1920×1080 和
+  `quad_decimate: 2.0`。DSHOW 比 MSMF 打开更可靠。
 - 平移零点默认固定为 **画面中心、深度 1.00 m**
   （`tag.zero_mode: fixed`，`tag.zero_distance_m: 1.0`）。把 tag 放在这个位置
-  附近，手的平移偏移才接近零。朝向零点锁存为**第一次检测到有效 tag 时的姿态**，
-  整个会话不变；`g` 只开关跟随，不会重设零点。`p` 开关平移，`0` 显式重设朝向
-  并清空固定平移零点，`r` 全部重置。如果想用第一次 tag 位置作平移零点，设
-  `tag.zero_mode: sample`。
+  附近，手的平移偏移才接近零。朝向零点锁存为**第一次同时拿到有效 tag 和手机
+  样本时的姿态**，整个会话不变；`g` 只开关跟随，不会重设零点。`p` 开关平移，
+  `0` 显式重设朝向并清空固定平移零点，`r` 全部重置。如果想用第一次 tag 位置
+  作平移零点，设 `tag.zero_mode: sample`。
 - 初始姿态：**手心朝下**，中指指向方块（世界 +x）。
 - tag 坐标轴：**X+** = 向前/中指，**Y+** = 向右，**Z+** = 手心朝向，
-  **Z−** = 仿真向上。旋转映射为 **绿轴 → 横滚**、**红轴 → 俯仰**、
-  **蓝轴 → 左右转**，三个轴相互独立。
+  **Z−** = 仿真向上。没有手机时，完整 tag 旋转映射为 **绿轴 → 横滚**、
+  **红轴 → 俯仰**、**蓝轴 → 左右转**；启用手机后，tag 只提供蓝轴 yaw。
+- 手机提供 yaw+pitch，屏幕法向量方向的 roll 被丢弃。HUD 显示当前 mount；
+  按 `m` 可在线循环 8 种映射，详见 [docs/PHONE.md](docs/PHONE.md)。
 - 平移使用 `overhead` 预设：tag 在画面中**向右**移动 → 机械手朝方块方向
   （世界 +x）移动；tag **靠近**头顶摄像头 → 机械手向上（世界 +z）移动。
 - 不再限制机械手的位置范围，tag 移动多远，手就跟随多远。tag 位姿丢失超过
@@ -353,7 +363,8 @@ src/shadowlink/
 ├── cli.py                argparse 入口
 ├── math3d.py             纯 NumPy 四元数工具
 ├── perception/           MediaPipe 检测器、HaMeR 后端、worker、选择器
-├── tag/                  AprilTag 相机线程、相对 6DoF 控制器
+├── tag/                  AprilTag 相机线程、共享帧源、控制器
+├── phone/                phyphox HTTP 客户端、轮询线程、yaw/pitch 映射
 ├── retarget/             几何、映射、平滑、校准
 ├── sim/                  MJCF 加载、Shadow Hand、固定步长、viewer
 ├── ui/                   叠加层、遥测、OpenCV 窗口/录像
@@ -367,8 +378,9 @@ src/shadowlink/
 
 ShadowLink 自身代码采用 MIT 许可。HaMeR 是以 MIT 许可引入的子模块；Shadow Hand
 资产来自 MuJoCo Menagerie / Shadow Robot，采用 Apache-2.0；MediaPipe 采用
-Apache-2.0；AprilTag 采用 BSD-2-Clause，Python 绑定为 `pupil-apriltags`。
-MANO 与 HaMeR checkpoint **不随仓库分发**，仍受各自原始许可约束。详见
+Apache-2.0；AprilTag 采用 BSD-2-Clause，Python 绑定为 `pupil-apriltags`；
+phyphox 是可选的第三方手机应用，不随仓库分发。MANO 与 HaMeR checkpoint
+**不随仓库分发**，仍受各自原始许可约束。详见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 引用

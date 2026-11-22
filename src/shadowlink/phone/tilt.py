@@ -51,10 +51,10 @@ MOUNT_OPTIONS: tuple[tuple[str, np.ndarray], ...] = (
     ("swap-b", np.array([0.0, 0.7071068, 0.0, 0.7071068])),  # X+Z  Y-Y  Z+X
     ("swap-c", np.array([0.7071068, 0.0, 0.7071068, 0.0])),  # X-Z  Y+Y  Z+X
     ("swap-d", np.array([0.0, -0.7071068, 0.0, 0.7071068])),  # X-Z  Y-Y  Z-X
-    ("cyclic-a", np.array([0.5, 0.5, 0.5, 0.5])),            # X+Y  Y+Z  Z+X
-    ("cyclic-b", np.array([0.5, -0.5, -0.5, 0.5])),          # X+Y  Y-Z  Z-X
-    ("cyclic-c", np.array([0.5, 0.5, -0.5, -0.5])),          # X-Y  Y+Z  Z-X
-    ("cyclic-d", np.array([0.5, -0.5, 0.5, -0.5])),          # X-Y  Y-Z  Z+X
+    ("cyclic-a", np.array([0.5, 0.5, 0.5, 0.5])),  # X+Y  Y+Z  Z+X
+    ("cyclic-b", np.array([0.5, -0.5, -0.5, 0.5])),  # X+Y  Y-Z  Z-X
+    ("cyclic-c", np.array([0.5, 0.5, -0.5, -0.5])),  # X-Y  Y+Z  Z-X
+    ("cyclic-d", np.array([0.5, -0.5, 0.5, -0.5])),  # X-Y  Y-Z  Z+X
 )
 
 

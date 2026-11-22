@@ -323,9 +323,7 @@ class AppConfig:
             raise ConfigError("sim.touch_force_scale must be > 0")
         pos = self.position
         if pos.preset not in ("front", "palm", "back", "overhead"):
-            raise ConfigError(
-                "position.preset must be one of front, palm, back, overhead"
-            )
+            raise ConfigError("position.preset must be one of front, palm, back, overhead")
         if not math.isfinite(pos.gain) or pos.gain <= 0:
             raise ConfigError("position.gain must be finite and > 0")
         if not math.isfinite(pos.deadzone_m) or pos.deadzone_m < 0:
@@ -385,9 +383,7 @@ class AppConfig:
         if not math.isfinite(tag.rotation_gain) or tag.rotation_gain <= 0:
             raise ConfigError("tag.rotation_gain must be finite and > 0")
         if not 0 <= tag.rotation_deadzone_deg < tag.rotation_max_angle_deg <= 180:
-            raise ConfigError(
-                "tag rotation angles must satisfy 0 <= deadzone < max_angle <= 180"
-            )
+            raise ConfigError("tag rotation angles must satisfy 0 <= deadzone < max_angle <= 180")
         if not math.isfinite(tag.rotation_smoothing_tau_s) or tag.rotation_smoothing_tau_s < 0:
             raise ConfigError("tag.rotation_smoothing_tau_s must be finite and >= 0")
         if not math.isfinite(tag.rotation_max_rate_rad_s) or tag.rotation_max_rate_rad_s <= 0:
@@ -421,9 +417,7 @@ class AppConfig:
         if phone.axes not in ("yaw_pitch", "pitch_roll"):
             raise ConfigError("phone.axes must be yaw_pitch or pitch_roll")
         if phone.mount_preset not in ("yaw_pitch", "back", "in_hand", "custom"):
-            raise ConfigError(
-                "phone.mount_preset must be yaw_pitch, back, in_hand, or custom"
-            )
+            raise ConfigError("phone.mount_preset must be yaw_pitch, back, in_hand, or custom")
         mount = (phone.mount_w, phone.mount_x, phone.mount_y, phone.mount_z)
         if not all(math.isfinite(value) for value in mount):
             raise ConfigError("phone.mount_w/x/y/z must be finite")
@@ -432,9 +426,7 @@ class AppConfig:
         if not math.isfinite(phone.gain) or phone.gain <= 0:
             raise ConfigError("phone.gain must be finite and > 0")
         if not 0 <= phone.deadzone_deg < phone.max_angle_deg <= 180:
-            raise ConfigError(
-                "phone angles must satisfy 0 <= deadzone < max_angle <= 180"
-            )
+            raise ConfigError("phone angles must satisfy 0 <= deadzone < max_angle <= 180")
         if self.runtime.max_frames < 0:
             raise ConfigError("runtime.max_frames must be >= 0")
 

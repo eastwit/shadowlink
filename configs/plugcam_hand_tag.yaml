@@ -22,9 +22,10 @@ tag:
   zero_distance_m: 1.0
   auto_follow: true
 
-# Tag blue-axis yaw + phone yaw/pitch. The phone roll channel is deliberately
-# ignored. mount_preset=yaw_pitch maps the phone's yaw/pitch onto the hand's
-# two non-yaw axes; switch to back/in_hand/custom if the phone mount differs.
+# Tag blue-axis yaw + phone yaw/pitch. The phone roll channel (screen normal)
+# is discarded. mount_preset=yaw_pitch maps phone yaw/pitch onto the hand's two
+# non-yaw axes; the shipped direction is swap-d. Press m at runtime to cycle
+# eight mounts, or switch to back/in_hand/custom if the phone mount differs.
 phone:
   source: phyphox
   host: 192.168.1.109

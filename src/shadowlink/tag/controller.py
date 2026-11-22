@@ -186,10 +186,7 @@ class TagControlSettings:
             raise ValueError("rotation_deadzone_rad must be finite and >= 0")
         if self.rotation_deadzone_rad >= self.rotation_max_angle_rad:
             raise ValueError("rotation deadzone must be smaller than max angle")
-        if (
-            not math.isfinite(self.rotation_smoothing_tau_s)
-            or self.rotation_smoothing_tau_s < 0
-        ):
+        if not math.isfinite(self.rotation_smoothing_tau_s) or self.rotation_smoothing_tau_s < 0:
             raise ValueError("rotation_smoothing_tau_s must be finite and >= 0")
         if not 0.0 < self.rotation_jump_reject_rad <= math.pi:
             raise ValueError("rotation_jump_reject_rad must be in (0, pi]")
@@ -249,9 +246,7 @@ class _TagTranslation:
         self._window: deque[tuple[int, np.ndarray]] = deque(maxlen=settings.temporal_window)
         self._fixed_reference = settings.fixed_reference
         self._reference: np.ndarray | None = (
-            None
-            if settings.fixed_reference is None
-            else settings.fixed_reference.copy()
+            None if settings.fixed_reference is None else settings.fixed_reference.copy()
         )
         self._anchor = np.zeros(3, dtype=np.float64)
         self._output = np.zeros(3, dtype=np.float64)
@@ -336,10 +331,7 @@ class _TagTranslation:
             self._zero_pending = False
             self._state = "tracking"
             return True
-        if (
-            self._latest is None
-            or now - self._latest.timestamp > self.settings.stale_timeout_s
-        ):
+        if self._latest is None or now - self._latest.timestamp > self.settings.stale_timeout_s:
             self._zero_pending = True
             return False
         self._append(self._latest)
@@ -350,11 +342,7 @@ class _TagTranslation:
 
     def reset(self) -> None:
         self._window.clear()
-        self._reference = (
-            None
-            if self._fixed_reference is None
-            else self._fixed_reference.copy()
-        )
+        self._reference = None if self._fixed_reference is None else self._fixed_reference.copy()
         self._anchor = np.zeros(3, dtype=np.float64)
         self._output = np.zeros(3, dtype=np.float64)
         self._last_output = np.zeros(3, dtype=np.float64)
@@ -402,9 +390,7 @@ class TagPoseController:
         self._jump_candidate_q: np.ndarray | None = None
         self._jump_candidate_count = 0
         self._phone = (
-            PhoneTiltController(settings.phone_tilt)
-            if settings.phone_tilt is not None
-            else None
+            PhoneTiltController(settings.phone_tilt) if settings.phone_tilt is not None else None
         )
 
     # ------------------------------------------------------------- properties

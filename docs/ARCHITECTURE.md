@@ -2,8 +2,9 @@
 
 ShadowLink turns one RGB frame into a 21-joint hand observation, maps it into 20
 actuator targets, and advances a MuJoCo model in real time. A hand-held AprilTag
-drives the whole-hand base pose. Everything else exists to make that loop
-testable, configurable, and publishable.
+drives translation and stable yaw; an optional phyphox phone supplies the two
+tilt axes. Everything else exists to make that loop testable, configurable, and
+publishable.
 
 ## Layers
 
@@ -11,16 +12,16 @@ testable, configurable, and publishable.
 cli.py / __main__.py
         │
         ▼
-app.py (TeleopApp) ──────────────────────────────────────────────┐
-   │            │            │          │          │             │
-   ▼            ▼            ▼          ▼          ▼             ▼
-capture.py   perception/   retarget/  tag/       sim/ + ui/
-   │            │            │          │          │
-   ▼            ▼            ▼          ▼          ▼
-types.py     types.py     geometry.py service.py model.py
-             detector.py  mapper.py   controller.py shadow_hand.py
-             worker.py    smoothing.py types.py
-                          calibration.py
+app.py (TeleopApp) ────────────────────────────────────────────────────────┐
+   │            │            │          │          │          │            │
+   ▼            ▼            ▼          ▼          ▼          ▼            ▼
+capture.py   perception/   retarget/  tag/       phone/     sim/ + ui/
+   │            │            │          │          │          │
+   ▼            ▼            ▼          ▼          ▼          ▼
+types.py     types.py     geometry.py service.py client.py  model.py
+             detector.py  mapper.py   controller.py service.py shadow_hand.py
+             worker.py    smoothing.py types.py    attitude.py
+                          calibration.py            tilt.py
 ```
 
 Dependency rules:
@@ -33,6 +34,9 @@ Dependency rules:
   `pupil-apriltags` is imported lazily inside `tag/service.py`. The package
   never imports `sim/` or `perception/`; its controller depends on `config.py`,
   `math3d.py`, and the shared filters in `retarget/smoothing.py`.
+- `phone/` owns the optional phyphox HTTP polling thread and publishes immutable
+  `PhoneSample` objects. It depends only on `math3d.py`, `config.py`, and the
+  standard library; `tag/controller.py` consumes its tilt helper.
 - `math3d.py` depends only on NumPy and the standard library.
 - Only `app.py` orchestrates the layers.
 - Only `cli.py` uses `argparse`.
@@ -72,7 +76,7 @@ the thumb actuators by semantic name; values are clipped to the MJCF ranges.
 `waiting → tracking → lost` state machine with a rate-limited return to neutral.
 The finger neutral pose is calibrated per backend and side.
 
-## AprilTag 6-DoF
+## Whole-hand pose: AprilTag + phone
 
 `tag/service.py` owns one daemon thread named `shadowlink-tag`. It opens a UVC
 camera, detects one AprilTag pose per frame through `pupil-apriltags`, and
@@ -88,8 +92,8 @@ mirrored principal-point intrinsics for the resulting pose.
 
 `tag/controller.py` owns the relative mapping. At zero it records both the tag
 pose and the current hand-base orientation. Translation is a median-windowed
-tag displacement through the camera preset, radial deadzone, gain, bounds,
-One-Euro filter, and slew limiter. Rotation is:
+tag displacement through the camera preset, radial deadzone, gain, One-Euro
+filter, and slew limiter; there is no spatial clamp. Rotation is:
 
 ```text
 q_rel_tag    = conj(q_tag_zero) ⊗ q_tag_now
@@ -128,9 +132,10 @@ shows the zero triad through `Viewer.set_macro_zero`.
 `config.py` contains frozen dataclasses with YAML loading and dotted overrides.
 `configs/default.yaml` mirrors the defaults and is locked by a test.
 
-The main loop is the only writer of MuJoCo state. Perception, the tag camera, and
-the viewer run in separate threads or processes and communicate through
-immutable latest-value slots. The app never blocks on a camera or model.
+The main loop is the only writer of MuJoCo state. Perception, the tag camera,
+the phyphox poller, and the viewer run in separate threads or processes and
+communicate through immutable latest-value slots. The app never blocks on a
+camera, HTTP request, or model.
 
 ## Failure behaviour
 
@@ -138,4 +143,7 @@ Perception exceptions are reported through `WorkerHealth`, logged, and make the
 process exit non-zero. The tag service is optional for finger control: camera or
 detector failures are reported in `TagHealth` and the HUD, while the rest of the
 app continues. Tag samples older than `tag.stale_timeout_s` are not returned,
-which freezes translation and orientation at their last values.
+which freezes translation and orientation at their last values. The phyphox
+poller reports `PhoneHealth` and reconnects; a stale phone freezes orientation
+but leaves tag translation running. With no phone configured, the tag drives
+full orientation instead.

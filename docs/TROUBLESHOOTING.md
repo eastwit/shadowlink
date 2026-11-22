@@ -75,9 +75,10 @@ Close other apps using the camera and verify the index:
 python -c "from pygrabber.dshow_graph import FilterGraph; print(list(enumerate(FilterGraph().get_input_devices())))"
 ```
 
-The hand camera and tag camera indices must differ. Change `capture.camera` or
-`tag.camera` in `configs/default.yaml`. The tag camera defaults to DSHOW; MSMF on
-Astra can take tens of seconds to open.
+In the default two-camera mode the hand and tag camera indices must differ.
+Change `capture.camera` or `tag.camera` in `configs/default.yaml`. With
+`capture.source: tag` the tag camera is shared, so `capture.camera` is ignored.
+The tag camera defaults to DSHOW; MSMF on Astra can take tens of seconds to open.
 
 ## Preview or viewer fails
 
@@ -124,9 +125,32 @@ the tag at the same point produces no motion.
 
 ### Directions are reversed or the hand spins around the wrong point
 
-Flip translation with `position.invert_x/y/z`, rotation with
-`tag.rotation_invert_x/y/z`, adjust `tag.rotation_gain`, or select another
-`tag.pivot` (`palm`, `wrist`, `forearm`).
+Flip translation with `position.invert_x/y/z`, tag rotation with
+`tag.rotation_invert_x/y/z`, or select another `tag.pivot` (`palm`, `wrist`,
+`forearm`). Phone tilt axes are tuned live with `m`; the HUD shows the active
+mount name. See [PHONE.md](PHONE.md).
+
+### Phone/phyphox problems
+
+- HUD says `phone error` or `connecting`: verify Remote Access with
+  `curl http://PHONE:8080/config` from the same Wi-Fi. Check the experiment is
+  measuring and `phone.host`/`port` are correct.
+- HUD says `phone stale` or orientation freezes: Wi-Fi dropped or the phone
+  paused. Tag translation keeps working.
+- Orientation never starts: both tag and phone must have a fresh sample to latch
+  the zero. Check the tag HUD line too.
+- Phone axes swapped or reversed: press `m` to cycle eight mappings; no restart
+  is needed.
+- Phone rate is low: lower `phone.poll_hz` from 50 to 30, close other traffic,
+  and avoid guest Wi-Fi/client isolation.
+
+### The block slips out of the fingers
+
+The hand collision geoms use `friction="2.0 0.05 0.005"`,
+`solimp="0.9 0.99 0.0001"`, and `solref="0.004 1"` in `right_hand.xml` /
+`left_hand.xml`; the block uses the same contact settings. Increase friction or
+stiffness further only if the simulation stays stable, or close the fingers more
+with the retargeting gains.
 
 ### No 30 FPS from the tag camera
 
