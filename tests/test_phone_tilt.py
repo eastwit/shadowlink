@@ -90,12 +90,12 @@ def test_yaw_pitch_mode_discards_roll():
     controller = PhoneTiltController(settings)
     assert controller.zero(phone_sample(identity(), ts=1.0))
 
-    roll = phone_sample(q_from_axis_angle([1.0, 0.0, 0.0], math.radians(40.0)), ts=1.1)
+    roll = phone_sample(q_from_axis_angle([0.0, 0.0, 1.0], math.radians(40.0)), ts=1.1)
     delta = controller.update(roll, now=1.1)
     assert delta is not None
     assert q_angle_between(delta, identity()) < 1e-9
 
-    for axis in ([0.0, 1.0, 0.0], [0.0, 0.0, 1.0]):
+    for axis in ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]):
         rotated = phone_sample(q_from_axis_angle(axis, math.radians(30.0)), ts=1.2)
         delta = controller.update(rotated, now=1.2)
         assert delta is not None
@@ -147,15 +147,15 @@ def test_hybrid_controller_keeps_tag_yaw_and_phone_yaw_pitch():
     assert out is not None
     assert q_angle_between(out, q_from_axis_angle([0.0, 0.0, 1.0], 0.0)) < 1e-6
 
-    # Phone yaw maps through the inverse cyclic mount onto hand pitch.
-    phone_yaw = q_from_axis_angle([0.0, 0.0, 1.0], math.radians(20.0))
+    # Phone yaw (+X) maps to hand pitch.
+    phone_yaw = q_from_axis_angle([1.0, 0.0, 0.0], math.radians(20.0))
     p1 = phone_sample(phone_yaw, ts=1.06, seq=2)
     controller.update_orientation(t0, 1.06, True, phone_sample=p1)
     out = controller.update_orientation(t0, 1.07, True, phone_sample=p1)
     assert out is not None
     assert abs(abs(out[2]) - abs(math.sin(math.radians(10.0)))) < 2e-3
 
-    # Phone pitch maps to hand roll.
+    # Phone pitch (+Y) maps to hand roll.
     phone_pitch = q_from_axis_angle([0.0, 1.0, 0.0], math.radians(20.0))
     p2 = phone_sample(phone_pitch, ts=1.08, seq=3)
     controller.update_orientation(t0, 1.08, True, phone_sample=p2)
@@ -163,12 +163,12 @@ def test_hybrid_controller_keeps_tag_yaw_and_phone_yaw_pitch():
     assert out is not None
     assert abs(abs(out[3]) - abs(math.sin(math.radians(10.0)))) < 2e-3
 
-    # Phone roll about its long axis is discarded.
-    phone_roll = q_from_axis_angle([1.0, 0.0, 0.0], math.radians(30.0))
+    # Phone roll about the screen normal (+Z) is discarded.
+    phone_roll = q_from_axis_angle([0.0, 0.0, 1.0], math.radians(30.0))
     p3 = phone_sample(phone_roll, ts=1.10, seq=4)
     controller.update_orientation(t0, 1.10, True, phone_sample=p3)
     out = controller.update_orientation(t0, 1.11, True, phone_sample=p3)
     assert out is not None
-    assert q_angle_between(out, q_from_axis_angle([0.0, 0.0, 1.0], 0.0)) < 1e-6
+    assert q_angle_between(out, identity()) < 1e-6
 
     assert controller.update_orientation(t0, 1.12, True, phone_sample=None) is None

@@ -108,9 +108,9 @@ return to zero. The app writes the resulting quaternion and offset to
 
 When `phone.source=phyphox`, the tag contributes only its blue-axis twist
 (yaw), and the phyphox attitude contributes yaw+pitch through `phone/tilt.py`.
-The phone roll channel is removed with a swing-twist split about the phone's
-long axis. `phone.mount_preset=yaw_pitch` maps phone yaw to hand pitch and phone
-pitch to hand roll, while the tag keeps hand yaw. Phone and tag zero are
+The phone roll channel is removed with a swing-twist split about the screen
+normal (user-frame +Z). `phone.mount_preset=yaw_pitch` maps phone yaw to hand
+pitch and phone pitch to hand roll, while the tag keeps hand yaw. Phone and tag zero are
 captured together; if the phone is stale the orientation freezes while tag
 translation continues.
 

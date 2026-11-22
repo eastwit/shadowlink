@@ -167,8 +167,8 @@ That profile also enables a phone on the hand for the two tag axes that are
 least stable. The phone runs [phyphox](https://phyphox.org) with **Remote
 Access** enabled; ShadowLink polls it over HTTP (no extra Python package). The
 tag supplies yaw from its blue axis, while the phone supplies yaw and pitch;
-the phone roll channel is deliberately ignored. Set `phone.host` to the address
-shown by phyphox:
+the phone roll channel (rotation about the screen normal) is deliberately
+ignored. Set `phone.host` to the address shown by phyphox:
 
 ```yaml
 phone:

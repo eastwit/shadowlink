@@ -31,15 +31,15 @@ from shadowlink.phone.service import PhoneSample
 # the screen.  The service rotates Android's native frame into this one.
 BACK_MOUNT = np.array([0.0, 0.7071068, 0.0, -0.7071068], dtype=np.float64)
 IN_HAND_MOUNT = np.array([0.7071068, 0.0, 0.7071068, 0.0], dtype=np.float64)
-# 180 degrees about (phone Y + phone Z). It maps the user-frame yaw axis (+Z)
-# to hand pitch (+Y), the user-frame pitch axis (+Y) to hand roll (+Z), and the
-# discarded roll axis (+X) to hand -X (yaw).
-YAW_PITCH_MOUNT = np.array([0.0, 0.0, 0.7071068, 0.7071068], dtype=np.float64)
+# Same cyclic map as the tag. Phone +Z (screen normal / roll) -> hand +X
+# (yaw, discarded); phone +X (yaw) -> hand +Y (pitch); phone +Y (pitch) ->
+# hand +Z (roll).
+YAW_PITCH_MOUNT = np.array([0.5, 0.5, 0.5, 0.5], dtype=np.float64)
 
 _WORLD_UP = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-# The service rotates Android into a user-facing frame where +X runs from the
-# screen toward the charging port. Android roll (about its +Y axis) is +X here.
-_ROLL_AXIS = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+# The service rotates Android into a user-facing frame whose +Z is the screen
+# normal. The phone roll channel is rotation about that +Z axis.
+_ROLL_AXIS = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
 
 def mount_for_config(config) -> np.ndarray:

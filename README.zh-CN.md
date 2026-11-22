@@ -155,7 +155,8 @@ HaMeR/MediaPipe 做手指识别和 AprilTag 做整手位姿，因此需要让手
 这个配置还会用手机补齐 tag 最不稳的两个轴。手机运行
 [phyphox](https://phyphox.org) 并打开 **Remote Access**，ShadowLink 通过
 HTTP 轮询，不需要额外 Python 依赖。tag 的蓝轴提供 yaw，手机提供 yaw 和
-pitch，手机的 roll 数据故意不使用。把 `phone.host` 改成 phyphox 显示的地址：
+pitch，手机 roll（绕屏幕法向量）的数据故意不使用。把 `phone.host` 改成
+phyphox 显示的地址：
 
 ```yaml
 phone:
