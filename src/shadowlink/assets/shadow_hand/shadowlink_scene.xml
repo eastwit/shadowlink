@@ -18,7 +18,7 @@
     <material name="grid" texture="grid" texrepeat="24 24" reflectance="0.05"/>
     <material name="table" rgba="0.45 0.29 0.16 1" specular="0.1" shininess="0.15"/>
     <material name="table_leg" rgba="0.30 0.22 0.16 1"/>
-    <material name="cylinder" rgba="0.18 0.55 0.85 1" specular="0.3" shininess="0.3"/>
+    <material name="ball" rgba="0.85 0.35 0.15 1" specular="0.3" shininess="0.3"/>
   </asset>
 
   <worldbody>
@@ -28,7 +28,7 @@
           material="grid" contype="1" conaffinity="1"/>
 
     <!-- Tabletop under the hand. The hand starts palm-down about 12 cm above
-         this surface, so it can descend and grasp the cylinder. -->
+         this surface, so it can descend and grasp the small ball. -->
     <geom name="table_top" type="box" size="0.42 0.32 0.015"
           pos="0.36 0.0 -0.235" material="table"
           friction="0.8 0.01 0.001" contype="1" conaffinity="1"/>
@@ -45,11 +45,11 @@
           pos="0.67 0.27 -0.375" material="table_leg"
           contype="1" conaffinity="1"/>
 
-    <!-- Free grasp target on the tabletop. -->
-    <body name="cylinder" pos="0.52 0.0 -0.16">
-      <freejoint name="cylinder_free"/>
-      <geom name="cylinder" type="cylinder" size="0.05 0.06" mass="0.12"
-            material="cylinder" friction="1.2 0.01 0.002" condim="6"
+    <!-- Small free grasp target on the tabletop. -->
+    <body name="ball" pos="0.50 0.0 -0.19">
+      <freejoint name="ball_free"/>
+      <geom name="ball" type="sphere" size="0.03" mass="0.05"
+            material="ball" friction="1.2 0.01 0.002" condim="6"
             contype="1" conaffinity="1"/>
     </body>
   </worldbody>

@@ -28,7 +28,7 @@ def layout(model):
 
 
 def test_model_dimensions(model):
-    # 24 hand DOFs plus a free cylinder on the tabletop.
+    # 24 hand DOFs plus a free ball on the tabletop.
     assert model.nq == 31
     assert model.nv == 30
     assert model.nu == 20
@@ -37,14 +37,14 @@ def test_model_dimensions(model):
     assert model.opt.timestep == pytest.approx(0.002)
 
 
-def test_cylinder_is_a_free_body_on_the_table(model):
+def test_ball_is_a_free_body_on_the_table(model):
     import mujoco
 
-    cylinder = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "cylinder")
-    assert cylinder > 0
-    joint = int(model.body_jntadr[cylinder])
+    ball = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ball")
+    assert ball > 0
+    joint = int(model.body_jntadr[ball])
     assert int(model.jnt_type[joint]) == int(mujoco.mjtJoint.mjJNT_FREE)
-    # Keyframes address the hand DOFs first, so the cylinder must come after.
+    # Keyframes address the hand DOFs first, so the ball must come after.
     assert int(model.jnt_qposadr[joint]) == 24
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "table_top") > 0
 

@@ -83,7 +83,7 @@ def test_translation_is_relative_to_the_first_sample_and_uses_the_front_preset()
     assert ctrl.position_state == "tracking"
 
 
-def test_overhead_preset_maps_tag_right_to_cylinder_and_closer_to_up():
+def test_overhead_preset_maps_tag_right_to_ball_and_closer_to_up():
     ctrl = controller(position=position_config(preset="overhead"))
     ctrl.update_translation(sample(0.0, 0.0, 1.0, t=0.0, seq=0), 0.0, True)
     out = ctrl.update_translation(sample(0.1, 0.0, 0.9, t=0.1, seq=1), 0.1, True)

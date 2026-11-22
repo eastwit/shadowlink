@@ -210,11 +210,11 @@ def test_macro_pose_reset_and_validation(hand):
     np.testing.assert_allclose(hand.macro_pivot_world, pivot, atol=1e-12)
 
 
-def test_reset_free_bodies_restores_the_cylinder(hand):
+def test_reset_free_bodies_restores_the_ball(hand):
     import mujoco
 
-    cylinder = mujoco.mj_name2id(hand.model, mujoco.mjtObj.mjOBJ_BODY, "cylinder")
-    joint = int(hand.model.body_jntadr[cylinder])
+    ball = mujoco.mj_name2id(hand.model, mujoco.mjtObj.mjOBJ_BODY, "ball")
+    joint = int(hand.model.body_jntadr[ball])
     qpos_adr = int(hand.model.jnt_qposadr[joint])
     dof_adr = int(hand.model.jnt_dofadr[joint])
 

@@ -234,8 +234,8 @@ def load_keyframes(
     """Load hand keyframes, ignoring any extra scene objects.
 
     The shipped keyframe file stores only the hand qpos (24 entries). The scene
-    appends the free cylinder, so a hand-only vector is padded with ``qpos0``
-    for the remaining DOFs; the cylinder pose does not affect any actuator
+    appends the free ball, so a hand-only vector is padded with ``qpos0``
+    for the remaining DOFs; the ball pose does not affect any actuator
     length.
     """
     tree = ET.parse(Path(path))
