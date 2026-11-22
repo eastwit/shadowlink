@@ -157,8 +157,12 @@ class TagConfig:
     rotation_gain: float = 1.0
     rotation_deadzone_deg: float = 1.5
     rotation_max_angle_deg: float = 180.0
-    rotation_smoothing_tau_s: float = 0.06
-    rotation_max_rate_rad_s: float = 6.0
+    rotation_smoothing_tau_s: float = 0.12
+    rotation_max_rate_rad_s: float = 3.0
+    rotation_jump_reject_deg: float = 35.0
+    rotation_jump_confirm_frames: int = 5
+    min_decision_margin: float = 10.0
+    max_hamming: int = 1
     rotation_invert_x: bool = False
     rotation_invert_y: bool = False
     rotation_invert_z: bool = False
@@ -360,6 +364,14 @@ class AppConfig:
             raise ConfigError("tag.rotation_smoothing_tau_s must be finite and >= 0")
         if not math.isfinite(tag.rotation_max_rate_rad_s) or tag.rotation_max_rate_rad_s <= 0:
             raise ConfigError("tag.rotation_max_rate_rad_s must be finite and > 0")
+        if not 0 < tag.rotation_jump_reject_deg <= 180:
+            raise ConfigError("tag.rotation_jump_reject_deg must be in (0, 180]")
+        if tag.rotation_jump_confirm_frames < 1:
+            raise ConfigError("tag.rotation_jump_confirm_frames must be >= 1")
+        if not math.isfinite(tag.min_decision_margin) or tag.min_decision_margin < 0:
+            raise ConfigError("tag.min_decision_margin must be finite and >= 0")
+        if not 0 <= tag.max_hamming <= 3:
+            raise ConfigError("tag.max_hamming must be in [0, 3]")
         if self.runtime.max_frames < 0:
             raise ConfigError("runtime.max_frames must be >= 0")
 

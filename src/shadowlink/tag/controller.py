@@ -157,6 +157,8 @@ class TagControlSettings:
     rotation_max_angle_rad: float
     rotation_smoothing_tau_s: float
     rotation_max_rate_rad_s: float
+    rotation_jump_reject_rad: float
+    rotation_jump_confirm_frames: int
     rotation_sign: np.ndarray
 
     def __post_init__(self) -> None:
@@ -186,6 +188,10 @@ class TagControlSettings:
             or self.rotation_smoothing_tau_s < 0
         ):
             raise ValueError("rotation_smoothing_tau_s must be finite and >= 0")
+        if not 0.0 < self.rotation_jump_reject_rad <= math.pi:
+            raise ValueError("rotation_jump_reject_rad must be in (0, pi]")
+        if self.rotation_jump_confirm_frames < 1:
+            raise ValueError("rotation_jump_confirm_frames must be >= 1")
 
     @classmethod
     def from_config(
@@ -215,6 +221,8 @@ class TagControlSettings:
             rotation_max_angle_rad=math.radians(float(tag.rotation_max_angle_deg)),
             rotation_smoothing_tau_s=float(tag.rotation_smoothing_tau_s),
             rotation_max_rate_rad_s=float(tag.rotation_max_rate_rad_s),
+            rotation_jump_reject_rad=math.radians(float(tag.rotation_jump_reject_deg)),
+            rotation_jump_confirm_frames=int(tag.rotation_jump_confirm_frames),
             rotation_sign=sign,
         )
 
@@ -382,6 +390,9 @@ class TagPoseController:
         self._last_t: float | None = None
         self._orientation_state = "waiting"
         self._mount = settings.mount
+        self._last_raw_q: np.ndarray | None = None
+        self._jump_candidate_q: np.ndarray | None = None
+        self._jump_candidate_count = 0
 
     # ------------------------------------------------------------- properties
     @property
@@ -445,6 +456,9 @@ class TagPoseController:
         if self._zero_tag is None or self._reference_hand is None:
             self._orientation_state = "waiting"
             return None
+        if not self._accept_raw_orientation(sample):
+            self._orientation_state = "rejecting"
+            return None
 
         relative_tag = q_mul(q_conj(self._zero_tag), sample.quat_wxyz)
         axis, angle = q_to_axis_angle(relative_tag)
@@ -478,12 +492,53 @@ class TagPoseController:
         self._orientation_state = "tracking"
         return self._out.copy()
 
+    def _accept_raw_orientation(self, sample: TagSample) -> bool:
+        """Reject single-frame pose flips while allowing sustained motion."""
+        quat = sample.quat_wxyz
+        if self._last_raw_q is None:
+            self._last_raw_q = quat.copy()
+            return True
+
+        angle = q_angle_between(self._last_raw_q, quat)
+        if angle <= self.settings.rotation_jump_reject_rad:
+            self._last_raw_q = quat.copy()
+            self._jump_candidate_q = None
+            self._jump_candidate_count = 0
+            return True
+
+        # A jump is only accepted after it persists for several frames; this
+        # filters AprilTag pose-solution flips and isolated noisy detections.
+        if (
+            self._jump_candidate_q is not None
+            and q_angle_between(self._jump_candidate_q, quat)
+            <= self.settings.rotation_jump_reject_rad * 0.35
+        ):
+            self._jump_candidate_count += 1
+        else:
+            self._jump_candidate_q = quat.copy()
+            self._jump_candidate_count = 1
+
+        if self._jump_candidate_count >= self.settings.rotation_jump_confirm_frames:
+            self._last_raw_q = quat.copy()
+            self._jump_candidate_q = None
+            self._jump_candidate_count = 0
+            return True
+        return False
+
+    def reset_orientation_gate(self) -> None:
+        self._last_raw_q = None
+        self._jump_candidate_q = None
+        self._jump_candidate_count = 0
+
     def zero_orientation(self, sample: TagSample | None, hand_quat) -> bool:
         if sample is None or not sample.ready:
             self._orientation_state = "waiting"
             return False
         self._zero_tag = q_norm(sample.quat_wxyz)
         self._reference_hand = q_norm(hand_quat)
+        self._last_raw_q = self._zero_tag.copy()
+        self._jump_candidate_q = None
+        self._jump_candidate_count = 0
         self._out = self._reference_hand.copy()
         self._last_t = None
         self._orientation_state = "tracking"
@@ -507,3 +562,4 @@ class TagPoseController:
         self._reference_hand = None
         self._last_t = None
         self._orientation_state = "waiting"
+        self.reset_orientation_gate()

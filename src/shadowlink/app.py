@@ -393,6 +393,8 @@ class TeleopApp:
             return False
         if not self.tag_pose.initialized:
             self.tag_pose.zero_orientation(sample, self.hand.macro_pose)
+        else:
+            self.tag_pose.reset_orientation_gate()
         self.tag_following = True
         self._last_status = "tag orientation follow on (absolute first-tag zero)"
         return True

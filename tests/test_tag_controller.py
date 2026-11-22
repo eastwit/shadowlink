@@ -43,6 +43,7 @@ def tag_config(**overrides) -> TagConfig:
         "rotation_max_angle_deg": 180.0,
         "rotation_smoothing_tau_s": 0.0,
         "rotation_max_rate_rad_s": 1e6,
+        "rotation_jump_reject_deg": 60.0,
     }
     values.update(overrides)
     return TagConfig(**values)
@@ -207,6 +208,23 @@ def test_orientation_sign_flips_the_axis():
     rotated = q_from_axis_angle([0.0, 0.0, 1.0], math.radians(25.0))
     out = drive_orientation(ctrl, sample(quat=rotated, t=0.0))
     expected = q_from_axis_angle([1.0, 0.0, 0.0], math.radians(-25.0))
+    assert q_angle_between(out, expected) < 1e-6
+
+
+def test_isolated_orientation_jump_is_rejected_but_sustained_motion_is_accepted():
+    ctrl = controller(tag=tag_config(rotation_jump_reject_deg=35.0))
+    ctrl.zero_orientation(sample(t=0.0, seq=0), IDENTITY)
+    ctrl.update_orientation(sample(t=0.1, seq=1), 0.1, True)
+
+    jumped = q_from_axis_angle([0.0, 0.0, 1.0], math.radians(90.0))
+    assert ctrl.update_orientation(sample(quat=jumped, t=0.2, seq=2), 0.2, True) is None
+    assert ctrl.orientation_state == "rejecting"
+
+    out = None
+    for index, now in enumerate((0.3, 0.4, 0.5, 0.6), start=3):
+        out = ctrl.update_orientation(sample(quat=jumped, t=now, seq=index), now, True)
+    expected = q_from_axis_angle([1.0, 0.0, 0.0], math.radians(90.0))
+    assert out is not None
     assert q_angle_between(out, expected) < 1e-6
 
 

@@ -248,7 +248,10 @@ shadowlink calibrate --backend hamer --data-dir D:/models/hamer/_DATA
   （世界 +x）移动；tag **靠近**头顶摄像头 → 机械手向上（世界 +z）移动。
 - 不再限制机械手的位置范围，tag 移动多远，手就跟随多远。tag 位姿丢失超过
   0.5 秒后，位置和朝向都冻结在原地，不会跳回零。
-- tag 应在 Astra 画面内约 0.5–1.2 m，靠近青色中心/1 m 零点标记，光照均匀。
+- 抗噪：检测优先使用 `hamming=0` 且 decision margin 最高的 tag；单帧旋转跳变
+  超过 35° 会被拒绝，连续 5 帧都一致才接受。朝向输出使用 0.12 s slerp 和
+  3 rad/s 限速。
+- tag 应在 tag 相机画面内约 0.5–1.2 m，靠近青色中心/1 m 零点标记，光照均匀。
   太远或太斜会漏检。
 - 打印、坐标映射、内参和排错见 [docs/APRILTAG.md](docs/APRILTAG.md)。
 

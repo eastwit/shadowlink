@@ -102,8 +102,12 @@ tag:
   rotation_gain: 1.0
   rotation_deadzone_deg: 1.5
   rotation_max_angle_deg: 180.0
-  rotation_smoothing_tau_s: 0.06
-  rotation_max_rate_rad_s: 6.0
+  rotation_smoothing_tau_s: 0.12
+  rotation_max_rate_rad_s: 3.0
+  rotation_jump_reject_deg: 35.0
+  rotation_jump_confirm_frames: 5
+  min_decision_margin: 10.0
+  max_hamming: 1
   rotation_invert_x: false
   rotation_invert_y: false
   rotation_invert_z: false

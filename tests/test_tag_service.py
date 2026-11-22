@@ -13,6 +13,7 @@ from shadowlink.tag import TagService
 class _Result:
     tag_id = 5
     hamming = 0
+    decision_margin = 60.0
     pose_err = 0.01
     pose_t = np.array([[0.05], [-0.02], [0.7]], dtype=np.float64)
     pose_R = np.eye(3, dtype=np.float64)
@@ -72,6 +73,44 @@ def test_service_publishes_pose_and_auto_flips_a_mirrored_camera():
         service.close()
     assert service.health.state == "stopped"
     assert camera.released
+
+
+def test_prefers_the_highest_decision_margin_for_duplicate_ids():
+    class Result:
+        tag_id = 5
+        hamming = 0
+        pose_err = 0.01
+        pose_R = np.eye(3, dtype=np.float64)
+        corners = np.array(
+            [[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
+            dtype=np.float64,
+        )
+
+        def __init__(self, z, margin):
+            self.pose_t = np.array([[0.0], [0.0], [z]], dtype=np.float64)
+            self.decision_margin = margin
+
+    class Detector:
+        def detect(self, gray, **kwargs):
+            return [Result(0.5, 20.0), Result(1.1, 80.0)]
+
+    service = TagService(
+        TagConfig(camera="9", width=64, height=48, tag_id=5),
+        detector_factory=lambda: Detector(),
+        camera_factory=lambda: (_FakeCamera(), 64, 48),
+    )
+    service.start()
+    try:
+        sample = None
+        for _ in range(100):
+            sample = service.latest()
+            if sample is not None:
+                break
+            time.sleep(0.01)
+        assert sample is not None
+        assert sample.translation_m[2] == 1.1
+    finally:
+        service.close()
 
 
 def test_service_without_a_tag_keeps_searching():

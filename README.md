@@ -268,8 +268,11 @@ and hand side.
 - There is no spatial clamp: the hand can follow the tag arbitrarily far from
   the zero. If the tag pose is lost for 0.5 s, both position and orientation
   freeze in place instead of returning to zero.
-- Hold the tag roughly 0.5–1.2 m from the Astra in even light, near the cyan
-  center/1 m guide. See
+- Noise rejection: detections prefer `hamming=0` and the highest decision
+  margin; a single-frame rotation jump over 35° is rejected until it persists
+  for 5 frames. Orientation output uses a 0.12 s slerp and 3 rad/s rate limit.
+- Hold the tag roughly 0.5–1.2 m from the tag camera in even light, near the
+  cyan center/1 m guide. See
   [docs/APRILTAG.md](docs/APRILTAG.md) for the printable asset, axis mapping,
   intrinsics, and troubleshooting.
 

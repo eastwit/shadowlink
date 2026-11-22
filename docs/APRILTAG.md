@@ -118,7 +118,7 @@ Those axes are mapped to the Shadow Hand local frame:
 tag +X (red)   -> hand +Y (pitch axis)
 tag +Y (green) -> hand +Z (roll axis / middle-finger direction)
 tag +Z (blue)  -> hand +X (palm-normal / yaw axis)
-q_mount = [0, 0.7071068, 0, 0.7071068]
+q_mount = [0.5, 0.5, 0.5, 0.5]
 ```
 
 The relative rotation is applied in that hand-local frame:
@@ -159,6 +159,12 @@ rotation feel reversed. The result drives the forearm mocap body;
 | `tag.size_m` | `0.057` | black-border edge length in metres |
 | `tag.quad_decimate` | `1.0` | keep 1.0 for small/far tags |
 | `tag.auto_follow` | `true` | zero and follow at the first ready sample |
+| `tag.max_hamming` | `1` | reject decodes with more corrected bits |
+| `tag.min_decision_margin` | `10` | reject weak/false detections |
+| `tag.rotation_jump_reject_deg` | `35` | reject a single-frame orientation jump |
+| `tag.rotation_jump_confirm_frames` | `5` | accept a jump only after it persists |
+| `tag.rotation_smoothing_tau_s` | `0.12` | orientation slerp time constant |
+| `tag.rotation_max_rate_rad_s` | `3.0` | maximum orientation rate |
 
 Pose scale uses `tag.size_m` directly. If the tag was printed with 57 mm as the
 whole sheet including the quiet zone, measure the black square and use that
@@ -167,6 +173,12 @@ default assumes 57 mm is the black-border edge.
 
 ## Troubleshooting
 
+- **The hand still jumps occasionally:** the detector now rejects weak
+  (`hamming>1` / low decision margin) detections and single-frame orientation
+  flips, but reflective surfaces or another tag with the same ID can still
+  confuse it. Keep the tag away from monitor reflections and check the HUD for
+  `tag rot | rejecting`. Lower `tag.rotation_max_rate_rad_s` or increase
+  `tag.rotation_jump_confirm_frames` for stronger suppression.
 - **`tag` HUD says `error`:** camera index is busy or wrong, or
   `pupil-apriltags` is missing. Close other apps using the Astra.
 - **HUD says `searching`, no tag:** check `tag.family`/`tag.tag_id`, the black

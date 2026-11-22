@@ -134,6 +134,12 @@ def test_tag_and_position_defaults():
     assert config.tag.show is True
     assert config.tag.zero_mode == "fixed"
     assert config.tag.zero_distance_m == pytest.approx(1.0)
+    assert config.tag.rotation_smoothing_tau_s == pytest.approx(0.12)
+    assert config.tag.rotation_max_rate_rad_s == pytest.approx(3.0)
+    assert config.tag.rotation_jump_reject_deg == pytest.approx(35.0)
+    assert config.tag.rotation_jump_confirm_frames == 5
+    assert config.tag.min_decision_margin == pytest.approx(10.0)
+    assert config.tag.max_hamming == 1
     assert config.tag.auto_follow is True
 
 
@@ -159,6 +165,11 @@ def test_tag_and_position_defaults():
         "tag.rotation_max_angle_deg=0",
         "tag.rotation_smoothing_tau_s=-1",
         "tag.rotation_max_rate_rad_s=0",
+        "tag.rotation_jump_reject_deg=0",
+        "tag.rotation_jump_reject_deg=181",
+        "tag.rotation_jump_confirm_frames=0",
+        "tag.min_decision_margin=-1",
+        "tag.max_hamming=4",
         "tag.api=serial",
         "tag.mirror=flip",
         "tag.zero_mode=relative",

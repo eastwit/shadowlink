@@ -37,6 +37,8 @@ _BACKENDS = {
 }
 _MAX_READ_FAILURES = 20
 
+TagPoseTuple = tuple[np.ndarray, np.ndarray, int, int, float, np.ndarray, float]
+
 
 class TagError(RuntimeError):
     """Raised when the tag camera or AprilTag dependency cannot be used."""
@@ -374,8 +376,13 @@ class TagService:
                 self._store_preview(frame, K_frame, poses, None)
                 continue
 
-            best = min(poses, key=lambda pose: float(np.linalg.norm(pose[0])))
-            translation, rotation, tag_id, hamming, pose_err, _corners = best
+            # Prefer a clean decode, then the strongest decision margin. This
+            # avoids alternating between a real tag and a dimmer reflection.
+            best = max(
+                poses,
+                key=lambda pose: (pose[3] == 0, pose[6], -float(np.linalg.norm(pose[0]))),
+            )
+            translation, rotation, tag_id, hamming, pose_err, _corners, margin = best
             now = self._clock()
             self._seq += 1
             sample = TagSample(
@@ -393,7 +400,7 @@ class TagService:
                 self._health = TagHealth(
                     state="running",
                     message=(
-                        f"id {tag_id} hamming {hamming} "
+                        f"id {tag_id} hamming {hamming} margin {margin:.0f} "
                         f"err {pose_err:.2f} mirror {self._mirror_label()}"
                     ),
                     camera=str(self.config.camera),
@@ -409,7 +416,7 @@ class TagService:
         detector: Any,
         gray: np.ndarray,
         K: np.ndarray,
-    ) -> list[tuple[np.ndarray, np.ndarray, int, int, float, np.ndarray]]:
+    ) -> list[TagPoseTuple]:
         try:
             results = detector.detect(
                 gray,
@@ -420,10 +427,16 @@ class TagService:
         except Exception as exc:  # noqa: BLE001 - detector errors are recoverable
             log.debug("tag detection failed: %s", exc)
             return []
-        poses = []
+        poses: list[TagPoseTuple] = []
         for result in results:
             tag_id = int(result.tag_id)
             if self.config.tag_id is not None and tag_id != int(self.config.tag_id):
+                continue
+            hamming = int(result.hamming)
+            margin = float(result.decision_margin)
+            if hamming > int(self.config.max_hamming):
+                continue
+            if margin < float(self.config.min_decision_margin):
                 continue
             translation = np.asarray(result.pose_t, dtype=np.float64).reshape(3)
             rotation = np.asarray(result.pose_R, dtype=np.float64).reshape(3, 3)
@@ -439,9 +452,10 @@ class TagService:
                     translation,
                     rotation,
                     tag_id,
-                    int(result.hamming),
+                    hamming,
                     float(result.pose_err),
                     corners,
+                    margin,
                 )
             )
         return poses
@@ -450,8 +464,8 @@ class TagService:
         self,
         frame: np.ndarray,
         K: np.ndarray,
-        poses: list[tuple[np.ndarray, np.ndarray, int, int, float, np.ndarray]],
-        best: tuple[np.ndarray, np.ndarray, int, int, float, np.ndarray] | None,
+        poses: list[TagPoseTuple],
+        best: TagPoseTuple | None,
     ) -> None:
         image = (
             frame
@@ -505,7 +519,7 @@ class TagService:
     @staticmethod
     def _draw_pose_axes(
         image: np.ndarray,
-        pose: tuple[np.ndarray, np.ndarray, int, int, float, np.ndarray],
+        pose: TagPoseTuple,
         K: np.ndarray,
         visual_scale: float = 1.0,
     ) -> None:
