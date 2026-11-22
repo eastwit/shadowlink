@@ -59,6 +59,14 @@ def test_hand_collision_geoms_have_high_friction(model):
         assert model.geom_friction[index, 1] >= 0.05
 
 
+def test_block_contacts_are_stiff(model):
+    import mujoco
+
+    block = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "block")
+    assert model.geom_solref[block, 0] <= 0.004
+    assert model.geom_solimp[block, 0] >= 0.9
+
+
 def test_actuator_names_and_order(layout):
     assert layout.names == EXPECTED_ACTUATOR_NAMES
     assert layout.semantics == (
