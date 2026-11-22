@@ -29,8 +29,8 @@ driving finger perception.
   `waiting → tracking → lost` state machine with a rate-limited return.
 - **Persistent calibration** for the finger neutral pose, per backend.
 - **Tactile simulation**: 120 taxels (5 fingers × 6 × 4), blue→red.
-- **Door scene**: a hinged door with a graspable lever handle at palm height.
-  Push or pull the handle to swing the door; `r` closes it again.
+- **Tabletop scene**: a table under the hand with a free graspable cylinder.
+  The hand starts palm-down above the surface; `r` restores the cylinder.
 - **Headless-friendly**: `--no-show --no-viewer`, synthetic frame sources, and a
   unit suite that needs no GPU, camera, or weights.
 - **No path hacks**: no `os.chdir`, no `sys.path.insert`, no hard-coded user
@@ -173,7 +173,7 @@ python -c "from pygrabber.dshow_graph import FilterGraph; print(list(enumerate(F
 | `g` | toggle tag whole-hand orientation follow |
 | `0` | re-zero both tag position and orientation at the current tag pose |
 | `p` | toggle tag whole-hand translation |
-| `r` | reset physics, targets, tag zero, translation, orientation, and the door |
+| `r` | reset physics, targets, tag zero, translation, orientation, and the cylinder |
 
 ### Common options
 
@@ -258,13 +258,13 @@ and hand side.
   following. `p` toggles translation, `0` explicitly re-zeroes orientation and
   resets fixed translation, and `r` resets everything. Set
   `tag.zero_mode: sample` to use the first tag position instead.
-- Initial hand pose: **palm down**, middle finger toward the door.
+- Initial hand pose: **palm down**, middle finger toward the cylinder (+world x).
 - Tag axes: **X+** = forward / middle finger, **Y+** = right, **Z+** = palm
   direction, **Z−** = up. Rotation mapping: **green → roll**, **red → pitch**,
   **blue → yaw**, so the three axes stay independent.
 - Translation uses the `overhead` preset: tag moving **right** moves the hand
-  toward the door (+world x), and tag moving **closer** to the overhead camera
-  moves the hand up (+world z).
+  toward the cylinder (+world x), and tag moving **closer** to the overhead
+  camera moves the hand up (+world z).
 - There is no spatial clamp: the hand can follow the tag arbitrarily far from
   the zero. If the tag pose is lost for 0.5 s, both position and orientation
   freeze in place instead of returning to zero.

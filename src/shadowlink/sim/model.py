@@ -234,8 +234,9 @@ def load_keyframes(
     """Load hand keyframes, ignoring any extra scene objects.
 
     The shipped keyframe file stores only the hand qpos (24 entries). The scene
-    appends the door hinge, so a hand-only vector is padded with ``qpos0`` for
-    the remaining DOFs; the door pose does not affect any actuator length.
+    appends the free cylinder, so a hand-only vector is padded with ``qpos0``
+    for the remaining DOFs; the cylinder pose does not affect any actuator
+    length.
     """
     tree = ET.parse(Path(path))
     poses: dict[str, np.ndarray] = {}

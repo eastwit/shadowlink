@@ -28,25 +28,25 @@ def layout(model):
 
 
 def test_model_dimensions(model):
-    # 24 hand DOFs plus the door hinge (1 qpos / 1 qvel).
-    assert model.nq == 25
-    assert model.nv == 25
+    # 24 hand DOFs plus a free cylinder on the tabletop.
+    assert model.nq == 31
+    assert model.nv == 30
     assert model.nu == 20
     assert model.nmocap == 1
     assert model.nsensor == 120
     assert model.opt.timestep == pytest.approx(0.002)
 
 
-def test_door_is_a_hinged_world_body_after_the_hand(model):
+def test_cylinder_is_a_free_body_on_the_table(model):
     import mujoco
 
-    door = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "door")
-    assert door > 0
-    joint = int(model.body_jntadr[door])
-    assert int(model.jnt_type[joint]) == int(mujoco.mjtJoint.mjJNT_HINGE)
-    # Keyframes address the hand DOFs first, so the door must come after them.
+    cylinder = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "cylinder")
+    assert cylinder > 0
+    joint = int(model.body_jntadr[cylinder])
+    assert int(model.jnt_type[joint]) == int(mujoco.mjtJoint.mjJNT_FREE)
+    # Keyframes address the hand DOFs first, so the cylinder must come after.
     assert int(model.jnt_qposadr[joint]) == 24
-    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "door_handle_bar") > 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "table_top") > 0
 
 
 def test_actuator_names_and_order(layout):

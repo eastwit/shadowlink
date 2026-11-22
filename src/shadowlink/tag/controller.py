@@ -59,7 +59,7 @@ PRESET_MATRICES: dict[str, np.ndarray] = {
     "palm": np.array([[0.0, -1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, -1.0]]),
     # Back of the hand toward the camera, fingers up.
     "back": np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]),
-    # Camera above the operator looking down: tag right -> +world x (door),
+    # Camera above the operator looking down: tag right -> +world x (cylinder),
     # tag closer -> +world z (up).
     "overhead": np.array([[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]]),
 }

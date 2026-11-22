@@ -16,9 +16,9 @@
              rgb1="0.24 0.26 0.29" rgb2="0.17 0.19 0.21"
              width="512" height="512"/>
     <material name="grid" texture="grid" texrepeat="24 24" reflectance="0.05"/>
-    <material name="door" rgba="0.48 0.30 0.17 1" specular="0.15" shininess="0.2"/>
-    <material name="frame" rgba="0.30 0.22 0.17 1"/>
-    <material name="handle" rgba="0.72 0.72 0.74 1" specular="0.6" shininess="0.6"/>
+    <material name="table" rgba="0.45 0.29 0.16 1" specular="0.1" shininess="0.15"/>
+    <material name="table_leg" rgba="0.30 0.22 0.16 1"/>
+    <material name="cylinder" rgba="0.18 0.55 0.85 1" specular="0.3" shininess="0.3"/>
   </asset>
 
   <worldbody>
@@ -27,42 +27,29 @@
     <geom name="floor" type="plane" size="3 3 0.05" pos="0 0 -0.5"
           material="grid" contype="1" conaffinity="1"/>
 
-    <!-- Door frame: two posts and a lintel around the opening. -->
-    <geom name="door_frame_left" type="box" size="0.04 0.02 0.50"
-          pos="0.56 -0.49 -0.015" material="frame"
+    <!-- Tabletop under the hand. The hand starts palm-down about 12 cm above
+         this surface, so it can descend and grasp the cylinder. -->
+    <geom name="table_top" type="box" size="0.42 0.32 0.015"
+          pos="0.36 0.0 -0.235" material="table"
+          friction="0.8 0.01 0.001" contype="1" conaffinity="1"/>
+    <geom name="table_leg_fl" type="box" size="0.022 0.022 0.125"
+          pos="0.05 -0.27 -0.375" material="table_leg"
           contype="1" conaffinity="1"/>
-    <geom name="door_frame_right" type="box" size="0.04 0.02 0.50"
-          pos="0.56 0.045 -0.015" material="frame"
+    <geom name="table_leg_fr" type="box" size="0.022 0.022 0.125"
+          pos="0.05 0.27 -0.375" material="table_leg"
           contype="1" conaffinity="1"/>
-    <geom name="door_frame_top" type="box" size="0.04 0.2675 0.025"
-          pos="0.56 -0.2225 0.49" material="frame"
+    <geom name="table_leg_bl" type="box" size="0.022 0.022 0.125"
+          pos="0.67 -0.27 -0.375" material="table_leg"
+          contype="1" conaffinity="1"/>
+    <geom name="table_leg_br" type="box" size="0.022 0.022 0.125"
+          pos="0.67 0.27 -0.375" material="table_leg"
           contype="1" conaffinity="1"/>
 
-    <!-- Hinged door with a graspable lever handle.  The free edge and handle
-         sit near the hand's starting position; push or pull the handle to
-         swing the door about the world-z hinge. -->
-    <body name="door" pos="0.56 -0.44 -0.015">
-      <joint name="door_hinge" type="hinge" axis="0 0 1"
-             range="-1.30 1.30" damping="0.7" armature="0.01"
-             frictionloss="0.02"/>
-      <geom name="door_panel" type="box" size="0.0175 0.23 0.475"
-            pos="0 0.23 0" mass="3.0" material="door"
-            friction="0.9 0.01 0.001" condim="4"
-            contype="1" conaffinity="1"/>
-      <!-- Lever bar along the door face, protruding toward the hand. -->
-      <geom name="door_handle_bar" type="capsule"
-            fromto="-0.09 0.33 0.075  -0.09 0.40 0.075"
-            size="0.012" mass="0.08" material="handle"
-            friction="1.2 0.01 0.002" condim="6"
-            contype="1" conaffinity="1"/>
-      <geom name="door_handle_stem" type="capsule"
-            fromto="-0.018 0.365 0.075  -0.09 0.365 0.075"
-            size="0.012" mass="0.05" material="handle"
-            friction="1.2 0.01 0.002" condim="6"
-            contype="1" conaffinity="1"/>
-      <geom name="door_handle_rose" type="cylinder" size="0.025 0.008"
-            pos="-0.024 0.365 0.075" quat="0.7071068 0 0.7071068 0"
-            mass="0.04" material="handle"
+    <!-- Free grasp target on the tabletop. -->
+    <body name="cylinder" pos="0.52 0.0 -0.16">
+      <freejoint name="cylinder_free"/>
+      <geom name="cylinder" type="cylinder" size="0.05 0.06" mass="0.12"
+            material="cylinder" friction="1.2 0.01 0.002" condim="6"
             contype="1" conaffinity="1"/>
     </body>
   </worldbody>

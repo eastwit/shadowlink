@@ -208,8 +208,8 @@ class ShadowHand:
     def reset_free_bodies(self) -> None:
         """Restore every non-hand world object to its initial pose.
 
-        The door hinge (and any future free body) is reset here. Hand joints are
-        left untouched; the caller decides when to reapply the start pose.
+        The grasp cylinder (and any future free body) is reset here. Hand joints
+        are left untouched; the caller decides when to reapply the start pose.
         """
         qpos_sizes = {
             int(mujoco.mjtJoint.mjJNT_FREE): 7,
